@@ -15,6 +15,7 @@ import tempfile
 
 
 LITELLM_VERSION = "1.93.2"
+PYTHON_VERSION = "3.14"
 
 
 def digest_file(path: Path) -> str:
@@ -56,6 +57,40 @@ def validate_runtime(venv: Path) -> bool:
     return check.returncode == 0
 
 
+def uv_install_commands(
+    *, uv: Path, venv: Path, lock: Path
+) -> tuple[list[str], list[str]]:
+    cache = venv.parent / ".uv-cache"
+    create = [
+        str(uv),
+        "venv",
+        "--python",
+        PYTHON_VERSION,
+        "--managed-python",
+        "--no-project",
+        "--no-config",
+        "--cache-dir",
+        str(cache),
+        str(venv),
+    ]
+    install = [
+        str(uv),
+        "pip",
+        "install",
+        "--python",
+        str(venv_python(venv)),
+        "--require-hashes",
+        "--only-binary=:all:",
+        "--no-deps",
+        "--no-config",
+        "--cache-dir",
+        str(cache),
+        "-r",
+        str(lock),
+    ]
+    return create, install
+
+
 def write_runtime_atomic(data_dir: Path, runtime: dict[str, str]) -> Path:
     target = data_dir / "runtime.json"
     descriptor, temporary_name = tempfile.mkstemp(
@@ -92,6 +127,9 @@ def install(plugin_root: Path, plugin_data: Path) -> Path:
     plugin_data.mkdir(mode=0o700, parents=True, exist_ok=True)
     if os.name != "nt":
         plugin_data.chmod(0o700)
+    uv_path = shutil.which("uv")
+    if uv_path is None:
+        raise RuntimeError("uv is not available on PATH")
 
     name = runtime_name(lock_hash)
     target = plugin_data / name
@@ -100,25 +138,11 @@ def install(plugin_root: Path, plugin_data: Path) -> Path:
             shutil.rmtree(target)
         temporary = Path(tempfile.mkdtemp(prefix=".venv-install-", dir=plugin_data))
         try:
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(temporary)], check=True
+            create, install_locked = uv_install_commands(
+                uv=Path(uv_path), venv=temporary, lock=lock
             )
-            python = venv_python(temporary)
-            subprocess.run(
-                [
-                    str(python),
-                    "-m",
-                    "pip",
-                    "install",
-                    "--disable-pip-version-check",
-                    "--require-hashes",
-                    "--only-binary=:all:",
-                    "--no-deps",
-                    "-r",
-                    str(lock),
-                ],
-                check=True,
-            )
+            subprocess.run(create, check=True)
+            subprocess.run(install_locked, check=True)
             if not validate_runtime(temporary):
                 raise RuntimeError("installed runtime validation failed")
             os.replace(temporary, target)
@@ -142,8 +166,8 @@ def main() -> int:
     parser.add_argument("--plugin-root", required=True, type=Path)
     parser.add_argument("--plugin-data", required=True, type=Path)
     args = parser.parse_args()
-    if not (sys.version_info >= (3, 10) and sys.version_info < (3, 15)):
-        print("claudish-to-english setup requires Python 3.10 through 3.14", file=sys.stderr)
+    if sys.version_info[:2] != (3, 14):
+        print("claudish-to-english setup must be launched by uv with Python 3.14", file=sys.stderr)
         return 1
     try:
         target = install(args.plugin_root.resolve(), args.plugin_data.resolve())

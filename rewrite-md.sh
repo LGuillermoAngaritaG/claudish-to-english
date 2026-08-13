@@ -207,7 +207,13 @@ if [ -z "$rewrite" ]; then
   if [ "$NOTICE" = "1" ] && [ ! -e "$notified" ]; then
     why=""
     case "$failure" in
-      setup) why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once. Markdown rewrite skipped; file left unchanged." ;;
+      setup)
+        if command -v uv >/dev/null 2>&1; then
+          why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once. Markdown rewrite skipped; file left unchanged."
+        else
+          why="uv is not installed — install uv, then run \`claude --init-only\` once. Markdown rewrite skipped; file left unchanged."
+        fi
+        ;;
       configure) why="no model is configured — run \`/claudish-to-english:configure\`. Markdown rewrite skipped; file left unchanged." ;;
       timeout) why="rewrite of $(basename "$file") timed out after ${LLM_TIMEOUT}s. Raise CLAUDISH_MD_TIMEOUT or configure a faster model. File left unchanged." ;;
       provider|request) why="the configured model/provider call failed. Check the local plugin configuration and provider availability. File left unchanged." ;;

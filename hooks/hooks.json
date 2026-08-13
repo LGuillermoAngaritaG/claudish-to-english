@@ -6,16 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh",
             "args": [
-              "${CLAUDE_PLUGIN_ROOT}/scripts/setup.py",
-              "--plugin-root",
               "${CLAUDE_PLUGIN_ROOT}",
-              "--plugin-data",
               "${CLAUDE_PLUGIN_DATA}"
             ],
             "timeout": 600,
-            "statusMessage": "Installing the hash-locked claudish-to-english runtime"
+            "statusMessage": "Installing the hash-locked claudish-to-english runtime with uv"
           }
         ]
       }

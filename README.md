@@ -35,14 +35,21 @@ Then exit Claude Code and explicitly initialize installed plugins:
 claude --init-only
 ```
 
-Setup requires Python 3.10 through 3.14 and `jq` must be available to the
-runtime hooks. No Python packages are installed into that interpreter itself.
+The only model-runtime prerequisite is
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). The hooks also
+use `jq`; install it separately if it is not already available (for example,
+`brew install jq` on macOS). You do not need to install or select Python, create
+a virtual environment, or run `pip` yourself. If Python 3.14 is unavailable,
+`uv` downloads and manages it automatically.
 
 The plugin's documented `Setup` hook creates a versioned virtual environment
-under `${CLAUDE_PLUGIN_DATA}`, installs the exact dependencies from
-`requirements.lock` using `--require-hashes`, verifies LiteLLM is exactly
-`1.93.2`, and atomically activates that runtime. It does not install a command
-on your global `PATH` and it does not modify your project or shell profile.
+under `${CLAUDE_PLUGIN_DATA}`, uses `uv` to install the exact dependencies from
+`requirements.lock` with required hashes, verifies LiteLLM is exactly `1.93.2`,
+and atomically activates that runtime. The managed Python interpreter,
+environment, and package cache all stay under plugin data. Setup does not
+install a plugin command on your global `PATH`, invoke `pip`, or modify your
+project or shell profile. Uninstalling the plugin without `--keep-data` removes
+that private runtime state with the rest of its plugin data.
 
 Start Claude Code again and invoke the user-only configuration command:
 
@@ -180,8 +187,9 @@ compromise; see the [LiteLLM security advisory](https://github.com/BerriAI/litel
 This plugin deliberately uses the later signed
 [LiteLLM v1.93.2 release](https://github.com/BerriAI/litellm/releases/tag/v1.93.2)
 and pins the complete transitive dependency set with package hashes. Setup uses
-binary distributions only and validates the installed LiteLLM version before
-activating it.
+`uv`, binary distributions only, and validates the installed LiteLLM version
+before activating it. Ambient project and user `uv` configuration is ignored
+for this installation.
 
 The setup flow follows Claude Code's official documentation for
 [Setup hooks](https://code.claude.com/docs/en/hooks#setup) and
@@ -197,7 +205,7 @@ The deterministic suite uses a fake `litellm` module and a fake private runtime;
 it never needs a real provider credential or network call:
 
 ```bash
-python3 -B -m unittest discover -s tests -p 'test_*.py'
+uv run --no-project --no-config --python 3.14 python -B -m unittest discover -s tests -p 'test_*.py'
 bash tests/test_hooks.sh
 ```
 
@@ -209,7 +217,7 @@ claudish-to-english/
 ├── hooks/hooks.json      Setup, MessageDisplay, and PostToolUse hooks
 ├── requirements.in       deliberately pinned top-level dependency
 ├── requirements.lock     complete hash-locked runtime dependencies
-├── scripts/              setup, interactive configuration, internal helper
+├── scripts/              uv launchers, setup, configuration, internal helper
 ├── skills/configure/     user-only configuration command
 ├── tests/                deterministic unit and hook integration tests
 ├── rewrite.sh            display hook

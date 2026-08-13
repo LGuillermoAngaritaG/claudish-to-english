@@ -218,7 +218,13 @@ if [ -z "$rewrite" ]; then
     : > "$notified" 2>/dev/null || true
     last_delta="$(cat "$final_part" 2>/dev/null)"
     case "$failure" in
-      setup) why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once" ;;
+      setup)
+        if command -v uv >/dev/null 2>&1; then
+          why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once"
+        else
+          why="uv is not installed — install uv, then run \`claude --init-only\` once"
+        fi
+        ;;
       configure) why="no model is configured — run \`/claudish-to-english:configure\`" ;;
       timeout) why="the rewrite timed out after ${LLM_TIMEOUT}s — raise CLAUDISH_TIMEOUT or configure a faster model" ;;
       *) why="the configured model/provider call failed — check the local plugin configuration and provider availability" ;;

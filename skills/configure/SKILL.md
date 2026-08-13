@@ -7,7 +7,8 @@ disable-model-invocation: true
 Run the bundled interactive configurator in the foreground:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/configure.py" --plugin-data "${CLAUDE_PLUGIN_DATA}"
+"${CLAUDE_PLUGIN_ROOT}/scripts/configure.sh" \
+  "${CLAUDE_PLUGIN_ROOT}" "${CLAUDE_PLUGIN_DATA}"
 ```
 
 The user must type provider, model, endpoint, and (when required) API key into
