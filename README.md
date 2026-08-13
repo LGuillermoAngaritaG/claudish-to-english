@@ -20,12 +20,26 @@ Every hook fails open. Missing setup, missing configuration, provider errors,
 timeouts, or empty responses leave Claude's original text (and source files)
 unchanged.
 
+## What this fork adds
+
+- Replaces direct Ollama HTTP calls with a bundled LiteLLM helper, so rewrites
+  can use local Ollama or any other LiteLLM-supported provider and model.
+- Uses `uv` for the complete private runtime setup; there is no user-installed
+  helper command, LiteLLM proxy, MCP server, or manual Python environment.
+- Adds an explicit `claude --init-only` setup hook with an exact, hash-locked
+  LiteLLM dependency set under `${CLAUDE_PLUGIN_DATA}`.
+- Adds `/claudish-to-english:configure` for selecting the provider, model, and
+  optional endpoint and API key without putting credentials in the repository,
+  shell profile, or global environment.
+- Keeps both display and Markdown hooks fail-open and includes deterministic
+  tests that do not require provider credentials.
+
 ## Install and one-time setup
 
 Install from this repository's marketplace:
 
 ```text
-/plugin marketplace add gvzdv/claudish-to-english
+/plugin marketplace add LGuillermoAngaritaG/claudish-to-english
 /plugin install claudish-to-english@gvzdv-plugins
 ```
 
