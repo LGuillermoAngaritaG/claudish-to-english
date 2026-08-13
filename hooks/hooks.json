@@ -1,11 +1,32 @@
 {
   "hooks": {
+    "Setup": [
+      {
+        "matcher": "init",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/setup.py",
+              "--plugin-root",
+              "${CLAUDE_PLUGIN_ROOT}",
+              "--plugin-data",
+              "${CLAUDE_PLUGIN_DATA}"
+            ],
+            "timeout": 600,
+            "statusMessage": "Installing the hash-locked claudish-to-english runtime"
+          }
+        ]
+      }
+    ],
     "MessageDisplay": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/rewrite.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/rewrite.sh",
+            "args": ["${CLAUDE_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_DATA}"],
             "timeout": 60
           }
         ]
@@ -17,7 +38,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/rewrite-md.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/rewrite-md.sh",
+            "args": ["${CLAUDE_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_DATA}"],
             "timeout": 180
           }
         ]

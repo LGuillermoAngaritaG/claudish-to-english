@@ -4,7 +4,7 @@
 #
 # Fires after a Write/Edit and, IF the written file is a Markdown file that
 # lives under CLAUDISH_MD_DIR, rewrites its prose into plain English using a
-# local LLM (ollama). PostToolUse.updatedToolOutput only changes what Claude
+# configured LLM through the plugin's private LiteLLM runtime.
 # SEES, not the bytes on disk, so this hook does the file write itself.
 #
 # OPT-IN: does nothing unless CLAUDISH_MD_DIR is set. Only *.md files whose
@@ -19,7 +19,7 @@
 # The writes here go through the shell, NOT Claude's Write tool, so they do
 # NOT re-trigger PostToolUse — no loop.
 #
-# FAIL-OPEN CONTRACT: on ANY problem (disabled, no jq/curl, not under the dir,
+# FAIL-OPEN CONTRACT: on ANY problem (disabled, no jq, not under the dir,
 # not markdown, parse error, LLM down, timeout, empty rewrite) the hook leaves
 # the file exactly as the agent wrote it and exits 0. It never writes a partial
 # or empty rewrite over real content.
@@ -33,8 +33,6 @@
 #                                     Relative paths resolve against the tool's cwd.
 #   CLAUDISH_MD_MODE   sibling|overwrite   (default sibling)
 #   CLAUDISH_MD_SUFFIX <word>         sibling infix: NAME.<word>.md (default "plain")
-#   CLAUDISH_MODEL     <ollama model> (default gemma4:26b-mlx)
-#   CLAUDISH_OLLAMA    <base url>     (default http://localhost:11434)
 #   CLAUDISH_MIN_CHARS <n>            skip files whose prose (code stripped) is shorter (default 200)
 #   CLAUDISH_STUB      1|0            deterministic stub instead of ollama (mechanics testing)
 #   CLAUDISH_MD_TIMEOUT <seconds>     LLM client timeout for file rewrites (default 150).
@@ -43,10 +41,13 @@
 #                                     must stay below the PostToolUse hook timeout in hooks.json.
 #   CLAUDISH_DEBUG     1|0            append a debug log (default 0)
 #   CLAUDISH_NOTICE    1|0            once-per-session systemMessage when a rewrite is
-#                                     skipped because ollama is unreachable, times out,
-#                                     or the model is missing (default 1)
+#                                     skipped because setup/configuration is missing,
+#                                     or the model call fails (default 1)
 # ---------------------------------------------------------------------------
 set -uo pipefail
+
+PLUGIN_ROOT="${1:-$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)}"
+PLUGIN_DATA="${2:-}"
 
 ENABLED="${CLAUDISH_ENABLED:-1}"
 # Runtime kill switch: env is frozen at session launch, so a hotkey or script
@@ -56,8 +57,6 @@ ENABLED="${CLAUDISH_ENABLED:-1}"
 MD_DIR="${CLAUDISH_MD_DIR:-}"
 MD_MODE="${CLAUDISH_MD_MODE:-sibling}"
 MD_SUFFIX="${CLAUDISH_MD_SUFFIX:-plain}"
-MODEL="${CLAUDISH_MODEL:-gemma4:26b-mlx}"
-OLLAMA="${CLAUDISH_OLLAMA:-http://localhost:11434}"
 MIN_CHARS="${CLAUDISH_MIN_CHARS:-200}"
 STUB="${CLAUDISH_STUB:-0}"
 LLM_TIMEOUT="${CLAUDISH_MD_TIMEOUT:-150}"
@@ -86,7 +85,6 @@ canon() (
 [ "$ENABLED" = "1" ]        || pass_through "disabled"
 [ -n "$MD_DIR" ]            || pass_through "no CLAUDISH_MD_DIR (feature off)"
 command -v jq   >/dev/null 2>&1 || pass_through "no jq"
-command -v curl >/dev/null 2>&1 || pass_through "no curl"
 
 payload="$(cat)"
 [ -n "$payload" ] || pass_through "empty payload"
@@ -157,42 +155,63 @@ dbg "prose_len=$prose_len min=$MIN_CHARS fm_lines=${fm_lines:-0}"
 
 # ---- obtain the rewrite ---------------------------------------------------
 rewrite=""
-curl_rc=0
-err=""
+llm_rc=0
+failure=""
 if [ "$STUB" = "1" ]; then
   rewrite="STUB-SIMPLIFIED-MD ✦ mode=$MD_MODE prose_len=$prose_len ✦"$'\n\n'"$body"
   dbg "stub rewrite"
 else
   sys="You rewrite Markdown prose into much simpler, plain English. Keep every fact, name, number, link, and file path. Keep all Markdown structure — headings, lists, tables, and links. Do NOT change fenced code blocks or any YAML frontmatter; reproduce them exactly. Use short sentences and everyday words. Output ONLY the rewritten Markdown, with no preamble, labels, or commentary."
-  req="$(jq -n --arg m "$MODEL" --arg s "$sys" --arg u "$body" \
-        '{model:$m,stream:false,think:false,options:{temperature:0.3},messages:[{role:"system",content:$s},{role:"user",content:$u}]}' 2>/dev/null)"
-  [ -n "$req" ] || pass_through "req build failed"
-  resp="$(printf '%s' "$req" | curl -sS --max-time "$LLM_TIMEOUT" \
-          -H 'Content-Type: application/json' -X POST "$OLLAMA/api/chat" -d @- 2>/dev/null)"
-  curl_rc=$?
-  rewrite="$(printf '%s' "$resp" | jq -j '.message.content // empty' 2>/dev/null)"
-  err="$(printf '%s' "$resp" | jq -r '.error // empty' 2>/dev/null)"
-  dbg "ollama curl_rc=$curl_rc resp_bytes=${#resp} rewrite_bytes=${#rewrite} err=${err:-none}"
+  if [ -z "$PLUGIN_DATA" ] || [ ! -f "$PLUGIN_DATA/runtime.json" ]; then
+    llm_rc=90
+    failure="setup"
+  elif [ ! -f "$PLUGIN_DATA/config.json" ]; then
+    llm_rc=91
+    failure="configure"
+  else
+    runtime_name="$(jq -r '.venv // empty' "$PLUGIN_DATA/runtime.json" 2>/dev/null)"
+    case "$runtime_name" in
+      ''|*/*|*..*) llm_rc=90; failure="setup" ;;
+      *)
+        runtime_python="$PLUGIN_DATA/$runtime_name/bin/python"
+        if [ ! -x "$runtime_python" ]; then
+          llm_rc=90
+          failure="setup"
+        else
+          req="$(jq -n --arg s "$sys" --arg u "$body" '{system:$s,content:$u}' 2>/dev/null)"
+          if [ -z "$req" ]; then
+            llm_rc=1
+            failure="request"
+          else
+            rewrite="$(printf '%s' "$req" | "$runtime_python" "$PLUGIN_ROOT/scripts/claudish_llm.py" \
+              --config "$PLUGIN_DATA/config.json" --timeout "$LLM_TIMEOUT" 2>/dev/null)"
+            llm_rc=$?
+            [ "$llm_rc" = "124" ] && failure="timeout"
+            [ "$llm_rc" != "0" ] && [ -z "$failure" ] && failure="provider"
+            [ "$llm_rc" = "0" ] && [ -z "$rewrite" ] && failure="empty"
+          fi
+        fi
+        ;;
+    esac
+  fi
+  dbg "llm rc=$llm_rc failure=${failure:-none} rewrite_bytes=${#rewrite}"
 fi
 
 # Empty/failed rewrite -> fail open (file left exactly as the agent wrote it).
-# When the cause is a FIXABLE setup problem (ollama down, timeout, model not
-# pulled), surface a ONE-TIME, per-session systemMessage so the silent skip is
+# When the cause is a fixable setup/configuration/provider problem, surface a
+# ONE-TIME, per-session systemMessage so the silent skip is
 # not a mystery. A systemMessage does not block the tool and is not fed to
 # Claude as context; the file is still left untouched either way.
 if [ -z "$rewrite" ]; then
   notified="$LOG_ROOT/$SID.md-notified"
   if [ "$NOTICE" = "1" ] && [ ! -e "$notified" ]; then
     why=""
-    if [ "$curl_rc" = "28" ]; then
-      why="rewrite of $(basename "$file") timed out after ${LLM_TIMEOUT}s — the model is too slow for a file this size. Raise CLAUDISH_MD_TIMEOUT (and the PostToolUse hook timeout in hooks.json), or set CLAUDISH_MODEL to a smaller model. File left unchanged."
-    elif [ "$curl_rc" != "0" ]; then
-      why="can't reach ollama at $OLLAMA — Markdown rewrite skipped, file left unchanged. Start it with \`ollama serve\`."
-    elif printf '%s' "${err:-}" | grep -qi 'not found'; then
-      why="ollama model '$MODEL' isn't available — Markdown rewrite skipped, file left unchanged. Pull it with \`ollama pull $MODEL\`, or set CLAUDISH_MODEL to a model you have."
-    elif [ -n "${err:-}" ]; then
-      why="ollama error while rewriting Markdown: $err. File left unchanged."
-    fi
+    case "$failure" in
+      setup) why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once. Markdown rewrite skipped; file left unchanged." ;;
+      configure) why="no model is configured — run \`/claudish-to-english:configure\`. Markdown rewrite skipped; file left unchanged." ;;
+      timeout) why="rewrite of $(basename "$file") timed out after ${LLM_TIMEOUT}s. Raise CLAUDISH_MD_TIMEOUT or configure a faster model. File left unchanged." ;;
+      provider|request) why="the configured model/provider call failed. Check the local plugin configuration and provider availability. File left unchanged." ;;
+    esac
     if [ -n "$why" ]; then
       : > "$notified" 2>/dev/null || true
       jq -n --arg m "claudish-to-english: $why (shown once per session; set CLAUDISH_NOTICE=0 to silence)" \

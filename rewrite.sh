@@ -24,15 +24,17 @@
 # ORIGINAL text on screen. A display hook must never be able to swallow the
 # assistant's answer.
 #
-# Config (all via env, with safe defaults):
+# The model/provider/credential configuration lives in a private JSON file under
+# CLAUDE_PLUGIN_DATA. The explicit Setup hook installs the pinned LiteLLM
+# runtime there; /claudish-to-english:configure writes the JSON file.
+#
+# Behavior config (env, with safe defaults):
 #   CLAUDISH_ENABLED   1|0            master switch (default 1)
 #   CLAUDISH_OFF_FILE  <path>         flag file checked per message; when it
 #                                          exists, rewrites pause (default
 #                                          ~/.claude/claudish-off) — lets a
 #                                          hotkey/script toggle mid-session
 #   CLAUDISH_MODE      append|replace display strategy (default append)
-#   CLAUDISH_MODEL     <ollama model> (default gemma4:26b-mlx)
-#   CLAUDISH_OLLAMA    <base url>     (default http://localhost:11434)
 #   CLAUDISH_MIN_CHARS <n>            skip messages shorter than this
 #                                           (prose, code stripped) (default 200)
 #   CLAUDISH_STUB      1|0            deterministic stub instead of ollama
@@ -40,11 +42,14 @@
 #   CLAUDISH_TIMEOUT   <seconds>      LLM client timeout (default 45)
 #   CLAUDISH_DEBUG     1|0            write a debug log (default 0)
 #   CLAUDISH_NOTICE    1|0            once-per-session on-screen notice when the
-#                                           rewrite is skipped because ollama is
-#                                           unreachable, times out, or the model
-#                                           is missing (default 1)
+#                                           rewrite is skipped because setup or
+#                                           configuration is missing, or the
+#                                           model call fails (default 1)
 # ---------------------------------------------------------------------------
 set -uo pipefail
+
+PLUGIN_ROOT="${1:-$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)}"
+PLUGIN_DATA="${2:-}"
 
 ENABLED="${CLAUDISH_ENABLED:-1}"
 # Runtime kill switch: env is frozen at session launch, so a hotkey or script
@@ -52,8 +57,6 @@ ENABLED="${CLAUDISH_ENABLED:-1}"
 # every invocation. Create it to pause rewrites instantly; remove it to resume.
 [ -f "${CLAUDISH_OFF_FILE:-$HOME/.claude/claudish-off}" ] && ENABLED=0
 MODE="${CLAUDISH_MODE:-append}"
-MODEL="${CLAUDISH_MODEL:-gemma4:26b-mlx}"
-OLLAMA="${CLAUDISH_OLLAMA:-http://localhost:11434}"
 MIN_CHARS="${CLAUDISH_MIN_CHARS:-200}"
 STUB="${CLAUDISH_STUB:-0}"
 LLM_TIMEOUT="${CLAUDISH_TIMEOUT:-45}"
@@ -89,7 +92,6 @@ emit_empty() {
 
 [ "$ENABLED" = "1" ] || pass_through
 command -v jq  >/dev/null 2>&1 || pass_through
-command -v curl >/dev/null 2>&1 || pass_through
 
 payload="$(cat)"
 [ -n "$payload" ] || pass_through
@@ -147,8 +149,8 @@ fi
 
 # ---- obtain the rewrite --------------------------------------------------
 rewrite=""
-curl_rc=0
-err=""
+llm_rc=0
+failure=""
 if [ "$STUB" = "1" ]; then
   nparts="$(ls "$mdir"/*.part 2>/dev/null | wc -l | tr -d ' ')"
   rewrite="STUB-SIMPLIFIED ✦ mode=$MODE chunks=$nparts prose_len=$prose_len ✦ (this text came from the hook, not the model)"
@@ -167,41 +169,60 @@ else
     dbg "context: userq_bytes=${#userq}"
   fi
 
-  req="$(jq -n --arg m "$MODEL" --arg s "$sys" --arg u "$full" \
-        '{model:$m,stream:false,think:false,options:{temperature:0.3},messages:[{role:"system",content:$s},{role:"user",content:$u}]}' 2>/dev/null)"
-  [ -n "$req" ] || { dbg "req build failed"; cleanup; [ "$MODE" = "replace" ] && { out="$mdir.orig"; printf '%s' "$full" > "$out" && emit "$out"; }; pass_through; }
-  resp="$(printf '%s' "$req" | curl -sS --max-time "$LLM_TIMEOUT" \
-          -H 'Content-Type: application/json' -X POST "$OLLAMA/api/chat" -d @- 2>/dev/null)"
-  curl_rc=$?
-  rewrite="$(printf '%s' "$resp" | jq -j '.message.content // empty' 2>/dev/null)"
-  err="$(printf '%s' "$resp" | jq -r '.error // empty' 2>/dev/null)"
-  dbg "ollama curl_rc=$curl_rc resp_bytes=${#resp} rewrite_bytes=${#rewrite} err=${err:-none}"
+  if [ -z "$PLUGIN_DATA" ] || [ ! -f "$PLUGIN_DATA/runtime.json" ]; then
+    llm_rc=90
+    failure="setup"
+  elif [ ! -f "$PLUGIN_DATA/config.json" ]; then
+    llm_rc=91
+    failure="configure"
+  else
+    runtime_name="$(jq -r '.venv // empty' "$PLUGIN_DATA/runtime.json" 2>/dev/null)"
+    case "$runtime_name" in
+      ''|*/*|*..*) llm_rc=90; failure="setup" ;;
+      *)
+        runtime_python="$PLUGIN_DATA/$runtime_name/bin/python"
+        if [ ! -x "$runtime_python" ]; then
+          llm_rc=90
+          failure="setup"
+        else
+          req="$(jq -n --arg s "$sys" --arg u "$full" '{system:$s,content:$u}' 2>/dev/null)"
+          if [ -z "$req" ]; then
+            llm_rc=1
+            failure="request"
+          else
+            rewrite="$(printf '%s' "$req" | "$runtime_python" "$PLUGIN_ROOT/scripts/claudish_llm.py" \
+              --config "$PLUGIN_DATA/config.json" --timeout "$LLM_TIMEOUT" 2>/dev/null)"
+            llm_rc=$?
+            [ "$llm_rc" = "124" ] && failure="timeout"
+            [ "$llm_rc" != "0" ] && [ -z "$failure" ] && failure="provider"
+            [ "$llm_rc" = "0" ] && [ -z "$rewrite" ] && failure="empty"
+          fi
+        fi
+        ;;
+    esac
+  fi
+  dbg "llm rc=$llm_rc failure=${failure:-none} rewrite_bytes=${#rewrite}"
 fi
 
 # Empty/failed rewrite -> fail open (or re-show original in replace mode).
 if [ -z "$rewrite" ]; then
-  dbg "empty rewrite -> fail open (curl_rc=$curl_rc)"
+  dbg "empty rewrite -> fail open (llm_rc=$llm_rc failure=${failure:-none})"
 
   # One-time, per-session notice when the cause is a FIXABLE setup problem:
-  # ollama unreachable (curl_rc!=0 — connection refused, timeout, DNS), or
-  # ollama up but returning an error (curl_rc=0 with .error set, e.g. the model
-  # was never pulled). A merely empty completion — ollama up, no error — stays
-  # silent; a notice would be wrong then.
+  # missing setup/configuration, timeout, or provider failure. A merely empty
+  # completion stays silent because the provider did return successfully.
   # The notice only APPENDS one line to the original; it never suppresses
   # content, so the fail-open contract still holds.
   notified="$BUF_ROOT/$sid.notified"
-  if [ "$NOTICE" = "1" ] && [ ! -e "$notified" ] && { [ "$curl_rc" != "0" ] || [ -n "${err:-}" ]; }; then
+  if [ "$NOTICE" = "1" ] && [ ! -e "$notified" ] && [ -n "${failure:-}" ] && [ "$failure" != "empty" ]; then
     : > "$notified" 2>/dev/null || true
     last_delta="$(cat "$final_part" 2>/dev/null)"
-    if [ "$curl_rc" = "28" ]; then
-      why="the rewrite timed out after ${LLM_TIMEOUT}s (model too slow for this message) — raise CLAUDISH_TIMEOUT or set CLAUDISH_MODEL to a smaller model"
-    elif [ "$curl_rc" != "0" ]; then
-      why="can't reach ollama at $OLLAMA — start it with \`ollama serve\` (see the plugin README)"
-    elif printf '%s' "${err:-}" | grep -qi 'not found'; then
-      why="ollama model '$MODEL' isn't available — pull it with \`ollama pull $MODEL\`, or set CLAUDISH_MODEL to a model you have"
-    else
-      why="ollama returned an error: ${err:-unknown}"
-    fi
+    case "$failure" in
+      setup) why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once" ;;
+      configure) why="no model is configured — run \`/claudish-to-english:configure\`" ;;
+      timeout) why="the rewrite timed out after ${LLM_TIMEOUT}s — raise CLAUDISH_TIMEOUT or configure a faster model" ;;
+      *) why="the configured model/provider call failed — check the local plugin configuration and provider availability" ;;
+    esac
     note=$'\n\n────────────────────────\n'"⚠️ claudish-to-english: $why. Showing Claude's original text unchanged. Shown once per session; set CLAUDISH_NOTICE=0 to silence."
     out="$BUF_ROOT/$sid.$mid.notice"
     if [ "$MODE" = "replace" ]; then
