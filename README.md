@@ -122,7 +122,8 @@ rebuild, and no environment variable to set.
 | file | used by | placeholders |
 |---|---|---|
 | `prompts/display.md` | the on-screen message rewrite | none |
-| `prompts/context.md` | appended to `display.md`, only when the user's question was recoverable from the transcript | `{{user_question}}` |
+| `prompts/append.md` | appended to `display.md`, only in `append` mode where the original stays on screen | none |
+| `prompts/context.md` | appended after those, only when the user's question was recoverable from the transcript | `{{user_question}}` |
 | `prompts/markdown.md` | the `PostToolUse` Markdown rewrite | none |
 
 Placeholders are substituted literally, so a question containing `&`, `\`, `*`,
@@ -142,7 +143,7 @@ only control hook behavior:
 | `CLAUDISH_MODE` | `append` | Display mode: `append` or `replace`. |
 | `CLAUDISH_MIN_CHARS` | `200` | Skip shorter prose after stripping fenced code. |
 | `CLAUDISH_MODEL` | `haiku` | Model alias passed to the CLI. |
-| `CLAUDISH_TIMEOUT` | `45` | Display rewrite timeout in seconds; covers CLI startup too. |
+| `CLAUDISH_TIMEOUT` | `90` | Display rewrite timeout in seconds; covers CLI startup too. |
 | `CLAUDISH_MD_TIMEOUT` | `150` | Markdown model-call timeout in seconds. |
 | `CLAUDISH_NOTICE` | `1` | Show one fail-open notice per session; `0` stays silent. |
 | `CLAUDISH_DEBUG` | `0` | Log non-secret state and result sizes under `$TMPDIR/claudish-to-english`. |

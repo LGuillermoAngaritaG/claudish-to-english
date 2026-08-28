@@ -40,7 +40,8 @@
 #   CLAUDISH_STUB      1|0            deterministic stub instead of ollama
 #                                           (for display-mechanics testing)
 #   CLAUDISH_TIMEOUT   <seconds>      rewrite timeout, CLI startup included
-#                                          (default 45)
+#                                          (default 90; a dense technical
+#                                          message measured 46-52s on haiku)
 #   CLAUDISH_MODEL     <alias>          model for rewrites (default haiku)
 #   CLAUDISH_DEBUG     1|0            write a debug log (default 0)
 #   CLAUDISH_NOTICE    1|0            once-per-session on-screen notice when the
@@ -60,7 +61,7 @@ ENABLED="${CLAUDISH_ENABLED:-1}"
 MODE="${CLAUDISH_MODE:-append}"
 MIN_CHARS="${CLAUDISH_MIN_CHARS:-200}"
 STUB="${CLAUDISH_STUB:-0}"
-LLM_TIMEOUT="${CLAUDISH_TIMEOUT:-45}"
+LLM_TIMEOUT="${CLAUDISH_TIMEOUT:-90}"
 DEBUG="${CLAUDISH_DEBUG:-0}"
 NOTICE="${CLAUDISH_NOTICE:-1}"
 
@@ -172,6 +173,13 @@ if [ "$STUB" = "1" ]; then
   dbg "stub rewrite"
 else
   sys="$(prompt_file display.md "You rewrite the assistant's message into much simpler, plain English. Keep every fact, name, number, and file path. Use short sentences and everyday words. Leave fenced code blocks unchanged. Output ONLY the rewritten message with no preamble, labels, or commentary.")"
+
+  # append mode leaves the original on screen directly above the rewrite, so the
+  # rewrite should not track it sentence by sentence. In replace mode the
+  # original is suppressed and that instruction would be false, so it is skipped.
+  if [ "$MODE" = "append" ]; then
+    sys="$sys"$'\n\n'"$(prompt_file append.md "The reader can already see the original message directly above your rewrite, so do not track it sentence by sentence. Give the shortest version a non-expert would fully understand.")"
+  fi
 
   # Context only: the original user question the assistant is answering.
   # Truncated to 800 codepoints inside jq (safe on multibyte boundaries).

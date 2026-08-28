@@ -1,0 +1,1 @@
+The reader can see the original message directly above your rewrite, so nothing needs repeating for the record. Give the shortest version that stands on its own. Where a sentence was already plain, you can leave it out rather than restate it.
