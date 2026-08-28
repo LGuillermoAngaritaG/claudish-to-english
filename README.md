@@ -113,6 +113,23 @@ For example, enable safe sibling output in your Claude Code `settings.json`:
 }
 ```
 
+## Changing the prompts
+
+The system prompts sent to the model live in [`prompts/`](prompts/), one file
+per hook. Edit a file and the next rewrite uses it; there is no restart, no
+rebuild, and no environment variable to set.
+
+| file | used by | placeholders |
+|---|---|---|
+| `prompts/display.md` | the on-screen message rewrite | none |
+| `prompts/context.md` | appended to `display.md`, only when the user's question was recoverable from the transcript | `{{user_question}}` |
+| `prompts/markdown.md` | the `PostToolUse` Markdown rewrite | none |
+
+Placeholders are substituted literally, so a question containing `&`, `\`, `*`,
+`$VAR` or newlines is inserted as written. A file that is missing or empty falls
+back to the prompt built into the script, so a bad edit degrades to the default
+rather than breaking the hook.
+
 ## Behavior configuration
 
 Rewrites need no launch-time environment variables. The `CLAUDISH_*` variables

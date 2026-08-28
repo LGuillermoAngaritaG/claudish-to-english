@@ -1,0 +1,1 @@
+For context, the user asked the assistant: "{{user_question}}". Use this only to understand the message. Do NOT rewrite, answer, or repeat the user's question — rewrite only the assistant's message that follows.

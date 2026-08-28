@@ -69,6 +69,14 @@ mkdir -p "$LOG_ROOT" 2>/dev/null || true
 
 dbg() { [ "$DEBUG" = "1" ] && printf '%s [%s] %s\n' "$(date '+%H:%M:%S')" "$$" "$*" >> "$LOG_ROOT/debug-md.log" 2>/dev/null; return 0; }
 
+# Read a prompt file from prompts/, falling back to the built-in text in $2 when
+# the file is missing or empty. Prompts are read per rewrite, so editing one
+# takes effect on the next message with no restart.
+prompt_file() {
+  local p; p="$(cat "$PLUGIN_ROOT/prompts/$1" 2>/dev/null)"
+  case "$p" in *[![:space:]]*) printf '%s' "$p" ;; *) printf '%s' "$2" ;; esac
+}
+
 # Fail-open: leave the file as the agent wrote it.
 pass_through() { dbg "pass_through: ${1:-}"; exit 0; }
 
@@ -161,7 +169,7 @@ if [ "$STUB" = "1" ]; then
   rewrite="STUB-SIMPLIFIED-MD ✦ mode=$MD_MODE prose_len=$prose_len ✦"$'\n\n'"$body"
   dbg "stub rewrite"
 else
-  sys="You rewrite Markdown prose into much simpler, plain English. Keep every fact, name, number, link, and file path. Keep all Markdown structure — headings, lists, tables, and links. Do NOT change fenced code blocks or any YAML frontmatter; reproduce them exactly. Use short sentences and everyday words. Output ONLY the rewritten Markdown, with no preamble, labels, or commentary."
+  sys="$(prompt_file markdown.md "You rewrite Markdown prose into much simpler, plain English. Keep every fact, name, number, link, and file path. Keep all Markdown structure — headings, lists, tables, and links. Do NOT change fenced code blocks or any YAML frontmatter; reproduce them exactly. Use short sentences and everyday words. Output ONLY the rewritten Markdown, with no preamble, labels, or commentary.")"
   rewrite="$(printf '%s' "$body" | "$PLUGIN_ROOT/claudish-call.sh" "$sys" "$LLM_TIMEOUT")"
   llm_rc=$?
   [ "$llm_rc" = "124" ] && failure="timeout"

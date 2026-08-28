@@ -71,6 +71,14 @@ mkdir -p "$BUF_ROOT" 2>/dev/null || true
 
 dbg() { [ "$DEBUG" = "1" ] && printf '%s [%s] %s\n' "$(date '+%H:%M:%S')" "$$" "$*" >> "$BUF_ROOT/debug.log" 2>/dev/null; return 0; }
 
+# Read a prompt file from prompts/, falling back to the built-in text in $2 when
+# the file is missing or empty. Prompts are read per rewrite, so editing one
+# takes effect on the next message with no restart.
+prompt_file() {
+  local p; p="$(cat "$PLUGIN_ROOT/prompts/$1" 2>/dev/null)"
+  case "$p" in *[![:space:]]*) printf '%s' "$p" ;; *) printf '%s' "$2" ;; esac
+}
+
 # Fail-open: keep the original delta on screen.
 pass_through() { dbg "pass_through"; exit 0; }
 
@@ -163,7 +171,7 @@ if [ "$STUB" = "1" ]; then
   rewrite="STUB-SIMPLIFIED ✦ mode=$MODE chunks=$nparts prose_len=$prose_len ✦ (this text came from the hook, not the model)"
   dbg "stub rewrite"
 else
-  sys="You rewrite the assistant's message into much simpler, plain English. Keep every fact, name, number, and file path. Use short sentences and everyday words. Leave fenced code blocks unchanged. Output ONLY the rewritten message with no preamble, labels, or commentary."
+  sys="$(prompt_file display.md "You rewrite the assistant's message into much simpler, plain English. Keep every fact, name, number, and file path. Use short sentences and everyday words. Leave fenced code blocks unchanged. Output ONLY the rewritten message with no preamble, labels, or commentary.")"
 
   # Context only: the original user question the assistant is answering.
   # Truncated to 800 codepoints inside jq (safe on multibyte boundaries).
@@ -172,7 +180,8 @@ else
     userq="$(jq -rs '([ .[] | select(.type=="user" and (.message.content|type=="string") and (.isMeta!=true)) | .message.content ] | last // "") | .[0:800]' "$tpath" 2>/dev/null)"
   fi
   if [ -n "$userq" ]; then
-    sys="$sys"$'\n\n'"For context, the user asked the assistant: \"$userq\". Use this only to understand the message. Do NOT rewrite, answer, or repeat the user's question — rewrite only the assistant's message that follows."
+    ctx="$(prompt_file context.md "For context, the user asked the assistant: \"{{user_question}}\". Use this only to understand the message. Do NOT rewrite, answer, or repeat the user's question — rewrite only the assistant's message that follows.")"
+    sys="$sys"$'\n\n'"${ctx//\{\{user_question\}\}/$userq}"
     dbg "context: userq_bytes=${#userq}"
   fi
 
