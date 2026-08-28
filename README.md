@@ -81,11 +81,17 @@ It defaults to `haiku` because the display hook fires on every assistant
 message.
 
 Rewrite latency scales with the message, and the model dominates it. A bare CLI
-call costs about three seconds, and a dense technical message rewrites in about
-four on `haiku`. Rewriting needs no reasoning, so the call sets
-`MAX_THINKING_TOKENS=0`: left on, `haiku` spent 1597 of 1721 output tokens
-thinking about a message that rewrote to 110, which took the same rewrite from
-under four seconds to roughly 24. `CLAUDISH_TIMEOUT`
+call costs about three seconds. Most of the rest is reasoning: left uncapped,
+`haiku` spent 1597 of 1721 output tokens thinking about a message that rewrote to
+110, and a dense technical rewrite measured 20 to 28 seconds. The call therefore
+caps the thinking budget at 1024 tokens, which measured 10 to 20 seconds on the
+same message.
+
+Setting `CLAUDISH_THINKING=0` removes the reasoning entirely and rewrites in
+under four seconds, but at that point the model starts dropping the identifiers
+the prompt tells it to keep verbatim - file names and variables get replaced with
+generic descriptions. Raising the cap past 1024 costs proportionally more time
+without improving the rewrite. `CLAUDISH_TIMEOUT`
 defaults to 300 seconds so a long message is never cut off, and the
 `MessageDisplay` hook is given 310 in `hooks.json` so the script's own watchdog
 always fails open before Claude Code kills the process. Lower it if you would
@@ -204,6 +210,7 @@ only control hook behavior:
 | `CLAUDISH_MODE` | `append` | Display mode: `append` or `replace`. |
 | `CLAUDISH_MIN_CHARS` | `200` | Skip shorter prose after stripping fenced code. |
 | `CLAUDISH_MODEL` | `haiku` | Model alias passed to the CLI. `/claudish model` writes a flag file that outranks it. |
+| `CLAUDISH_THINKING` | `1024` | Thinking-token budget for the rewrite. `0` is fastest but loses identifiers. |
 | `CLAUDISH_STYLE` | unset | `tldr`, `5y` or `caveman`. `/claudish style` overrides via flag file. |
 | `CLAUDISH_LANG` | unset | Force an output language. Set but empty keeps the message's own. |
 | `CLAUDISH_TIMEOUT` | `300` | Display rewrite timeout in seconds; covers CLI startup too. |

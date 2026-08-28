@@ -82,9 +82,10 @@ case "$(cat "$CAPTURE.system")" in
 esac
 [ "$(cat "$CAPTURE.model")" = 'haiku' ] || fail 'display request did not default to haiku'
 
-# Rewriting needs no reasoning, and haiku spends most of its output budget there
-# when left to its own devices, which is what made a rewrite take 24s instead of 4.
-[ "$(cat "$CAPTURE.thinking")" = '0' ] || fail 'thinking was not disabled for the rewrite call'
+# Left uncapped, haiku spends most of its output budget reasoning about a rewrite,
+# which is what made one take 24s instead of 8. Capped, not off: with no reasoning
+# at all the rewrite drops identifiers the prompt says to keep verbatim.
+[ "$(cat "$CAPTURE.thinking")" = '1024' ] || fail 'thinking budget was not capped for the rewrite call'
 
 # CLAUDISH_MODEL selects the model.
 MODEL_CAPTURE="$WORK/model"
@@ -101,6 +102,12 @@ printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
   CLAUDISH_MODEL_FILE="$WORK/model-file" \
   FAKE_CAPTURE="$MFILE_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
 [ "$(cat "$MFILE_CAPTURE.model")" = 'opus' ] || fail 'model flag file did not outrank CLAUDISH_MODEL'
+
+THINK_CAPTURE="$WORK/think"
+printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/think-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_THINKING=256 \
+  FAKE_CAPTURE="$THINK_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
+[ "$(cat "$THINK_CAPTURE.thinking")" = '256' ] || fail 'CLAUDISH_THINKING ignored'
 
 # A nested session must fail open rather than call itself.
 inner_out="$(printf '%s' "$display_payload" | env PATH="$WITH_CLI" \

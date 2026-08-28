@@ -55,10 +55,12 @@ cat > "$in_file"
 
 # No portable `timeout` on macOS, so watchdog the child by hand. The flag file
 # is what separates "we killed it" from "it failed on its own".
-# Rewriting needs no reasoning, but haiku spends most of its output budget on it
-# anyway: 1597 of 1721 output tokens were thinking on a message that rewrote to
-# 110. Turning it off took a rewrite from 24s to 3.8s with no loss in the result.
-(cd "$scratch" && MAX_THINKING_TOKENS=0 claude -p --model "$model" \
+# Left alone, haiku spends most of its output budget reasoning about a rewrite:
+# 1597 of 1721 output tokens, ~24s for a message that rewrote to 110. Capping it
+# gets most of that time back. Not zero, though - with no reasoning at all the
+# rewrite starts dropping the identifiers the prompt tells it to keep verbatim.
+# 1024 keeps them and still lands in ~8s; 2048 costs twice that for no gain.
+(cd "$scratch" && MAX_THINKING_TOKENS="${CLAUDISH_THINKING:-1024}" claude -p --model "$model" \
   --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
   --system-prompt "$sys") < "$in_file" > "$out" 2>/dev/null &
 pid=$!
