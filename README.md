@@ -8,31 +8,27 @@
 </p>
 
 A Claude Code plugin that shows a plain-English rewrite of each assistant
-message. It can use any model/provider supported by
-[LiteLLM](https://docs.litellm.ai/), including local Ollama. Claude's reasoning
-and saved transcript keep the original text; only the display changes.
+message. Rewrites run through the Claude Code CLI on your existing login, so a Claude
+subscription covers them and no API key is stored. Claude's reasoning and saved
+transcript keep the original text; only the display changes.
 
 An optional second hook rewrites Markdown files into plain English when Claude
 writes or edits them. It is opt-in and defaults to a non-destructive sibling
 file.
 
-Every hook fails open. Missing setup, missing configuration, provider errors,
-timeouts, or empty responses leave Claude's original text (and source files)
-unchanged.
+Every hook fails open. Missing configuration, CLI errors, timeouts, or empty
+responses leave Claude's original text (and source files) unchanged.
 
 ## What this fork adds
 
-- Replaces direct Ollama HTTP calls with a bundled LiteLLM helper, so rewrites
-  can use local Ollama or any other LiteLLM-supported provider and model.
-- Uses `uv` for the complete private runtime setup; there is no user-installed
-  helper command, LiteLLM proxy, MCP server, or manual Python environment.
-- Adds an explicit `claude --init-only` setup hook with an exact, hash-locked
-  LiteLLM dependency set under `${CLAUDE_PLUGIN_DATA}`.
-- Adds `/claudish-to-english:configure` for selecting the provider, model, and
-  optional endpoint and API key without putting credentials in the repository,
-  shell profile, or global environment.
+- Replaces direct Ollama HTTP calls with a `claude -p` subprocess, so rewrites
+  bill against an existing Claude subscription instead of a metered API key.
+- Marks the nested CLI session with `CLAUDISH_INNER` so its own display hook
+  fails open instead of recursing, and runs it in a scratch directory to keep
+  one-shot sessions out of the caller's project history.
+- Adds `/claudish-to-english:configure` for choosing the rewrite model.
 - Keeps both display and Markdown hooks fail-open and includes deterministic
-  tests that do not require provider credentials.
+  tests that stub the CLI and never make a real model call.
 
 ## Install and one-time setup
 
@@ -71,65 +67,44 @@ Start Claude Code again and invoke the user-only configuration command:
 /claudish-to-english:configure
 ```
 
-The interactive script asks for a LiteLLM provider prefix, model, optional API
-base URL, and an API key when the provider requires one. The key is read without
-terminal echo and is never logged or printed. Normal model invocation cannot
-trigger this command automatically.
+The interactive script asks only for a model alias, defaulting to `haiku`.
+There is no key to enter; the CLI reuses the login you already have. Normal
+model invocation cannot trigger this command automatically.
 
 If the runtime or configuration is unavailable, the first skipped rewrite in a
 session explains which of those two commands to run. The original text remains
 visible.
 
-## Provider examples
+## Choosing a model
 
-Use model names from LiteLLM's provider documentation. The configurator adds
-the provider prefix when needed.
-
-Local Ollama needs no API key:
+Any alias the Claude Code CLI accepts works, so `haiku`, `sonnet`, or a full
+model id such as `claude-haiku-4-5`:
 
 ```text
-Provider: ollama
-Model: llama3.2:3b
-API base URL: [press Enter for http://localhost:11434]
+Model alias [haiku]: haiku
 ```
 
-Start Ollama and pull the selected model separately before using it:
+`haiku` is the default because the display hook fires on every assistant
+message. Re-run `/claudish-to-english:configure` to change it.
 
-```bash
-ollama serve
-ollama pull llama3.2:3b
-```
+Rewrites cost roughly five seconds each, nearly all of it CLI startup rather
+than the model. They also draw on the same usage allowance as your interactive
+sessions, so a chatty session spends real quota on rewrites.
 
-A hosted provider example:
-
-```text
-Provider: openai
-Model: gpt-4.1-mini
-API base URL: [press Enter for the provider default]
-API key: [hidden input]
-```
-
-Re-run `/claudish-to-english:configure` whenever you want to change provider,
-model, endpoint, or key.
-
-## Credential storage and privacy
+## Configuration and privacy
 
 Configuration is stored as local plaintext at
-`${CLAUDE_PLUGIN_DATA}/config.json`. On POSIX systems the plugin enforces mode
-`0600` on the file and `0700` on its directory, writes through a temporary file,
-fsyncs it, and activates it with an atomic rename. The helper refuses a symlink
-or a configuration file readable by group/other users.
+`${CLAUDE_PLUGIN_DATA}/config.json`. It now holds only a model alias, no
+credential. On POSIX systems the plugin still enforces mode `0600` on the file
+and `0700` on its directory, writes through a temporary file, fsyncs it, and
+activates it with an atomic rename.
 
-This is permission-protected plaintext, not encrypted storage. It is
-deliberately not written to the repository, plugin root, macOS Keychain, shell
-profile, environment settings, or global `PATH`. Anyone who can read your user
-account's files can read it. Claude Code's plugin-data directory is removed on
-uninstall unless you use its `--keep-data` option.
-
-The configured endpoint receives the assistant message being rewritten and,
-for display rewrites, up to 800 characters of the original user question as
-context. Markdown rewrites send the Markdown body. With local Ollama this stays
-on the configured local host; with a hosted provider it leaves your machine.
+Rewrites are sent to Anthropic under your existing Claude credentials, the same
+path as your interactive sessions. Display rewrites include the assistant
+message plus up to 800 characters of the original user question as context;
+Markdown rewrites send the Markdown body. Unlike earlier versions of this fork,
+there is no local-only option: routing through the CLI means rewrites always
+leave your machine.
 
 ## Display hook
 
@@ -169,8 +144,8 @@ For example, enable safe sibling output in your Claude Code `settings.json`:
 
 ## Behavior configuration
 
-Provider credentials do not require launch-time environment variables. The
-remaining `CLAUDISH_*` variables only control hook behavior:
+Rewrites need no launch-time environment variables. The `CLAUDISH_*` variables
+only control hook behavior:
 
 | Variable | Default | Meaning |
 |---|---:|---|
@@ -178,7 +153,7 @@ remaining `CLAUDISH_*` variables only control hook behavior:
 | `CLAUDISH_OFF_FILE` | `~/.claude/claudish-off` | Live pause flag checked on every invocation. |
 | `CLAUDISH_MODE` | `append` | Display mode: `append` or `replace`. |
 | `CLAUDISH_MIN_CHARS` | `200` | Skip shorter prose after stripping fenced code. |
-| `CLAUDISH_TIMEOUT` | `45` | Display model-call timeout in seconds. |
+| `CLAUDISH_TIMEOUT` | `45` | Display rewrite timeout in seconds; covers CLI startup too. |
 | `CLAUDISH_MD_TIMEOUT` | `150` | Markdown model-call timeout in seconds. |
 | `CLAUDISH_NOTICE` | `1` | Show one fail-open notice per session; `0` stays silent. |
 | `CLAUDISH_DEBUG` | `0` | Log non-secret state and result sizes under `$TMPDIR/claudish-to-english`. |
@@ -195,6 +170,10 @@ rm ~/.claude/claudish-off
 ```
 
 ## Dependency security
+
+The rewrite path no longer imports LiteLLM; it shells out to the Claude Code
+CLI and needs only the standard library. The `Setup` hook still provisions the
+hash-locked runtime below, which is now vestigial and slated for removal.
 
 LiteLLM `1.82.7` and `1.82.8` were affected by a 2026 PyPI supply-chain
 compromise; see the [LiteLLM security advisory](https://github.com/BerriAI/litellm/issues/24518).
@@ -215,8 +194,8 @@ and plugin path variables follow the
 
 ## Development and testing
 
-The deterministic suite uses a fake `litellm` module and a fake private runtime;
-it never needs a real provider credential or network call:
+The deterministic suite stubs the `claude` binary and a fake private runtime;
+it never makes a real model call:
 
 ```bash
 uv run --no-project --no-config --python 3.14 python -B -m unittest discover -s tests -p 'test_*.py'
