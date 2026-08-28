@@ -130,4 +130,17 @@ md_error="$(printf '%s' "$md_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
 assert_contains "$(printf '%s' "$md_error" | jq -r '.systemMessage')" 'File left unchanged'
 [ "$(cat "$WORK/docs/input.md")" = $'# Dense title\n\nDense body.' ] || fail 'CLI failure changed Markdown source'
 
+# hooks.json: with an args array Claude Code execs the command as argv[0] with no
+# shell, so a quoted command string makes the quotes part of the path and the hook
+# silently never runs. Upstream can quote because it has no args array; this fork
+# cannot. Guard both hooks.
+for _h in MessageDisplay PostToolUse; do
+  _cmd="$(jq -r --arg h "$_h" '.hooks[$h][0].hooks[0].command' "$ROOT/hooks/hooks.json")"
+  _args="$(jq -r --arg h "$_h" '.hooks[$h][0].hooks[0].args // [] | length' "$ROOT/hooks/hooks.json")"
+  case "$_args:$_cmd" in
+    0:*) ;;
+    *:*'"'*) fail "$_h hook command is quoted while args is set; the hook will never run" ;;
+  esac
+done
+
 printf 'hook integration tests passed\n'
