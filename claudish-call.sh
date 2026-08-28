@@ -27,6 +27,14 @@ command -v claude >/dev/null 2>&1 || exit 3
 scratch="${TMPDIR:-/tmp}/claudish-to-english/cli-scratch"
 mkdir -p "$scratch" 2>/dev/null || exit 1
 
+# ponytail: the CLI writes a full session transcript per rewrite into
+# ~/.claude/projects/<slugified scratch path>/, and nothing else removes them --
+# they had reached 2.0 MB over 36 files in development. Sweep our own once they
+# are older than 30 min, the same opportunistic pattern the chunk buffers use.
+for _d in "$HOME"/.claude/projects/*claudish*cli-scratch; do
+  [ -d "$_d" ] && find "$_d" -name '*.jsonl' -mmin +30 -delete 2>/dev/null
+done
+
 out="$(mktemp "${TMPDIR:-/tmp}/claudish.out.XXXXXX")" || exit 1
 in_file="$out.in"
 expired="$out.expired"

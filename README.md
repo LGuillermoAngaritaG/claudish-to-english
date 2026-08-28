@@ -108,9 +108,11 @@ Three things land on disk:
   buffer directories after 30 minutes.
 - **A full transcript of every nested rewrite session**, written by the Claude
   Code CLI into `~/.claude/projects/<slugified-scratch-path>/`. Each one
-  contains the assistant message that was rewritten. They are not cleaned up:
-  36 of them totalling 2.0 MB accumulated during development of this fork.
-  Delete that directory if you do not want the history.
+  contains the assistant message that was rewritten. Upstream leaves these to
+  accumulate -- 36 of them totalling 2.0 MB built up while developing this
+  fork -- so each rewrite now sweeps those older than 30 minutes. Only
+  directories matching `*claudish*cli-scratch` are touched; your real project
+  transcripts are never read or removed.
 
 ## Display hook
 
