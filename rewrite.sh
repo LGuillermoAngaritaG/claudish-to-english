@@ -91,6 +91,12 @@ emit_empty() {
   exit 0
 }
 
+# The nested `claude -p` rewrite session loads this plugin too, so its own
+# MessageDisplay hook fires on the rewrite text. claudish-call.sh then exits 3
+# on the recursion guard, which reads as failure="cli" and appends the "not on
+# PATH" notice INTO the rewrite the outer session displays. Nothing downstream
+# of here is wanted in a nested session anyway.
+[ -n "${CLAUDISH_INNER:-}" ] && pass_through
 [ "$ENABLED" = "1" ] || pass_through
 command -v jq  >/dev/null 2>&1 || pass_through
 
