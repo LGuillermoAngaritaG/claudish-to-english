@@ -24,9 +24,9 @@
 # ORIGINAL text on screen. A display hook must never be able to swallow the
 # assistant's answer.
 #
-# The model/provider/credential configuration lives in a private JSON file under
-# CLAUDE_PLUGIN_DATA. The explicit Setup hook installs the pinned LiteLLM
-# runtime there; /claudish-to-english:configure writes the JSON file.
+# Rewrites are produced by claudish-call.sh, which shells out to the Claude
+# Code CLI and so reuses the login the user already has. No API key, no
+# separate runtime, no setup step.
 #
 # Behavior config (env, with safe defaults):
 #   CLAUDISH_ENABLED   1|0            master switch (default 1)
@@ -39,7 +39,9 @@
 #                                           (prose, code stripped) (default 200)
 #   CLAUDISH_STUB      1|0            deterministic stub instead of ollama
 #                                           (for display-mechanics testing)
-#   CLAUDISH_TIMEOUT   <seconds>      LLM client timeout (default 45)
+#   CLAUDISH_TIMEOUT   <seconds>      rewrite timeout, CLI startup included
+#                                          (default 45)
+#   CLAUDISH_MODEL     <alias>          model for rewrites (default haiku)
 #   CLAUDISH_DEBUG     1|0            write a debug log (default 0)
 #   CLAUDISH_NOTICE    1|0            once-per-session on-screen notice when the
 #                                           rewrite is skipped because setup or
@@ -49,7 +51,6 @@
 set -uo pipefail
 
 PLUGIN_ROOT="${1:-$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)}"
-PLUGIN_DATA="${2:-}"
 
 ENABLED="${CLAUDISH_ENABLED:-1}"
 # Runtime kill switch: env is frozen at session launch, so a hotkey or script
@@ -169,37 +170,18 @@ else
     dbg "context: userq_bytes=${#userq}"
   fi
 
-  if [ -z "$PLUGIN_DATA" ] || [ ! -f "$PLUGIN_DATA/runtime.json" ]; then
-    llm_rc=90
-    failure="setup"
-  elif [ ! -f "$PLUGIN_DATA/config.json" ]; then
-    llm_rc=91
-    failure="configure"
+  req_ok=1
+  [ -n "$sys" ] && [ -n "$full" ] || req_ok=0
+  if [ "$req_ok" != "1" ]; then
+    llm_rc=1
+    failure="request"
   else
-    runtime_name="$(jq -r '.venv // empty' "$PLUGIN_DATA/runtime.json" 2>/dev/null)"
-    case "$runtime_name" in
-      ''|*/*|*..*) llm_rc=90; failure="setup" ;;
-      *)
-        runtime_python="$PLUGIN_DATA/$runtime_name/bin/python"
-        if [ ! -x "$runtime_python" ]; then
-          llm_rc=90
-          failure="setup"
-        else
-          req="$(jq -n --arg s "$sys" --arg u "$full" '{system:$s,content:$u}' 2>/dev/null)"
-          if [ -z "$req" ]; then
-            llm_rc=1
-            failure="request"
-          else
-            rewrite="$(printf '%s' "$req" | "$runtime_python" "$PLUGIN_ROOT/scripts/claudish_llm.py" \
-              --config "$PLUGIN_DATA/config.json" --timeout "$LLM_TIMEOUT" 2>/dev/null)"
-            llm_rc=$?
-            [ "$llm_rc" = "124" ] && failure="timeout"
-            [ "$llm_rc" != "0" ] && [ -z "$failure" ] && failure="provider"
-            [ "$llm_rc" = "0" ] && [ -z "$rewrite" ] && failure="empty"
-          fi
-        fi
-        ;;
-    esac
+    rewrite="$(printf '%s' "$full" | "$PLUGIN_ROOT/claudish-call.sh" "$sys" "$LLM_TIMEOUT")"
+    llm_rc=$?
+    [ "$llm_rc" = "124" ] && failure="timeout"
+    [ "$llm_rc" = "3" ] && failure="cli"
+    [ "$llm_rc" != "0" ] && [ -z "$failure" ] && failure="provider"
+    [ "$llm_rc" = "0" ] && [ -z "$rewrite" ] && failure="empty"
   fi
   dbg "llm rc=$llm_rc failure=${failure:-none} rewrite_bytes=${#rewrite}"
 fi
@@ -218,16 +200,9 @@ if [ -z "$rewrite" ]; then
     : > "$notified" 2>/dev/null || true
     last_delta="$(cat "$final_part" 2>/dev/null)"
     case "$failure" in
-      setup)
-        if command -v uv >/dev/null 2>&1; then
-          why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once"
-        else
-          why="uv is not installed — install uv, then run \`claude --init-only\` once"
-        fi
-        ;;
-      configure) why="no model is configured — run \`/claudish-to-english:configure\`" ;;
-      timeout) why="the rewrite timed out after ${LLM_TIMEOUT}s — raise CLAUDISH_TIMEOUT or configure a faster model" ;;
-      *) why="the configured model/provider call failed — check the local plugin configuration and provider availability" ;;
+      cli) why="the \`claude\` CLI is not on PATH" ;;
+      timeout) why="the rewrite timed out after ${LLM_TIMEOUT}s — raise CLAUDISH_TIMEOUT or set CLAUDISH_MODEL to a faster model" ;;
+      *) why="the rewrite call failed — check that \`claude\` runs and you are logged in" ;;
     esac
     note=$'\n\n────────────────────────\n'"⚠️ claudish-to-english: $why. Showing Claude's original text unchanged. Shown once per session; set CLAUDISH_NOTICE=0 to silence."
     out="$BUF_ROOT/$sid.$mid.notice"

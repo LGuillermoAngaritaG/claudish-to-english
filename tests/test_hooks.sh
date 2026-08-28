@@ -8,80 +8,84 @@ trap 'rm -rf "$WORK"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected output to contain: $2" ;; esac; }
 
-make_runtime() {
-  data="$1"
-  mkdir -p "$data/fake-venv/bin"
-  chmod 700 "$data"
-  printf '{"venv":"fake-venv"}\n' > "$data/runtime.json"
-  printf '{"provider":"ollama","model":"ollama/test"}\n' > "$data/config.json"
-  chmod 600 "$data/runtime.json" "$data/config.json"
-  cp "$WORK/fake-python" "$data/fake-venv/bin/python"
-  chmod +x "$data/fake-venv/bin/python"
-}
-
-cat > "$WORK/fake-python" <<'SH'
+# Stand-in for the real CLI: records what it was handed, then answers per mode.
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/claude" <<'FAKE'
 #!/usr/bin/env bash
-request="$(cat)"
-[ -n "${FAKE_CAPTURE:-}" ] && printf '%s' "$request" > "$FAKE_CAPTURE"
+if [ -n "${FAKE_CAPTURE:-}" ]; then
+  cat > "$FAKE_CAPTURE.stdin"
+  while [ "$#" -gt 0 ]; do
+    [ "$1" = "--system-prompt" ] && printf '%s' "$2" > "$FAKE_CAPTURE.system"
+    [ "$1" = "--model" ] && printf '%s' "$2" > "$FAKE_CAPTURE.model"
+    shift
+  done
+else
+  cat >/dev/null
+fi
 case "${FAKE_MODE:-success}" in
-  timeout) exit 124 ;;
+  hang) sleep 30 ;;
   error) exit 1 ;;
+  empty) ;;
   markdown) printf '# Plain title\n\nPlain body.\n' ;;
   *) printf 'Plain response.' ;;
 esac
-SH
-chmod +x "$WORK/fake-python"
+FAKE
+chmod +x "$WORK/bin/claude"
+WITH_CLI="$WORK/bin:$PATH"
+# Has bash and jq, but no claude: the real CLI lives under the user's home.
+NO_CLI="/usr/bin:/bin"
 
-# Display hook: the internal helper receives the system prompt and full text.
-DISPLAY_DATA="$WORK/display-data"
-make_runtime "$DISPLAY_DATA"
-DISPLAY_CAPTURE="$WORK/display-request.json"
+# Display hook: the CLI receives the message on stdin and the prompt as a flag.
+CAPTURE="$WORK/display"
 display_payload='{"message_id":"m1","session_id":"s1","index":0,"final":true,"delta":"Dense source text."}'
-display_out="$(printf '%s' "$display_payload" | env \
-  TMPDIR="$WORK/display-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 \
-  FAKE_CAPTURE="$DISPLAY_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" "$DISPLAY_DATA")"
+display_out="$(printf '%s' "$display_payload" | env -u CLAUDISH_INNER \
+  PATH="$WITH_CLI" TMPDIR="$WORK/display-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 \
+  FAKE_CAPTURE="$CAPTURE" "$ROOT/rewrite.sh" "$ROOT")"
 display_content="$(printf '%s' "$display_out" | jq -r '.hookSpecificOutput.displayContent')"
 assert_contains "$display_content" 'Dense source text.'
 assert_contains "$display_content" 'Plain response.'
-[ "$(jq -r '.content' "$DISPLAY_CAPTURE")" = 'Dense source text.' ] || fail 'display request lost source text'
-jq -e '.system | contains("plain English")' "$DISPLAY_CAPTURE" >/dev/null || fail 'display request lost system prompt'
+[ "$(cat "$CAPTURE.stdin")" = 'Dense source text.' ] || fail 'display request lost source text'
+assert_contains "$(cat "$CAPTURE.system")" 'plain English'
+[ "$(cat "$CAPTURE.model")" = 'haiku' ] || fail 'display request did not default to haiku'
 
-# Replace mode must re-show the original while explaining missing setup.
-setup_out="$(printf '%s' "$display_payload" | env \
-  TMPDIR="$WORK/setup-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_MODE=replace \
-  "$ROOT/rewrite.sh" "$ROOT" "$WORK/no-runtime")"
-setup_content="$(printf '%s' "$setup_out" | jq -r '.hookSpecificOutput.displayContent')"
-assert_contains "$setup_content" 'Dense source text.'
-assert_contains "$setup_content" 'claude --init-only'
+# CLAUDISH_MODEL selects the model.
+MODEL_CAPTURE="$WORK/model"
+printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/model-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_MODEL=sonnet \
+  FAKE_CAPTURE="$MODEL_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
+[ "$(cat "$MODEL_CAPTURE.model")" = 'sonnet' ] || fail 'CLAUDISH_MODEL ignored'
 
-# A ready runtime without private configuration points at the explicit command.
-CONFIG_DATA="$WORK/config-data"
-make_runtime "$CONFIG_DATA"
-rm "$CONFIG_DATA/config.json"
-config_out="$(printf '%s' "$display_payload" | env \
-  TMPDIR="$WORK/config-tmp" CLAUDISH_MIN_CHARS=1 \
-  "$ROOT/rewrite.sh" "$ROOT" "$CONFIG_DATA")"
-config_content="$(printf '%s' "$config_out" | jq -r '.hookSpecificOutput.displayContent')"
-assert_contains "$config_content" '/claudish-to-english:configure'
+# A nested session must fail open rather than call itself.
+inner_out="$(printf '%s' "$display_payload" | env PATH="$WITH_CLI" \
+  TMPDIR="$WORK/inner-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_INNER=1 \
+  "$ROOT/rewrite.sh" "$ROOT")"
+[ -z "$inner_out" ] || fail 'nested invocation rewrote instead of passing through'
 
-# Markdown success writes only the sibling, then provider failure leaves source untouched.
-MD_DATA="$WORK/md-data"
-make_runtime "$MD_DATA"
+# Replace mode must re-show the original while explaining a missing CLI.
+nocli_out="$(printf '%s' "$display_payload" | env -u CLAUDISH_INNER \
+  PATH="$NO_CLI" TMPDIR="$WORK/nocli-tmp" CLAUDISH_MIN_CHARS=1 \
+  CLAUDISH_MODE=replace "$ROOT/rewrite.sh" "$ROOT")"
+nocli_content="$(printf '%s' "$nocli_out" | jq -r '.hookSpecificOutput.displayContent')"
+assert_contains "$nocli_content" 'Dense source text.'
+assert_contains "$nocli_content" 'not on PATH'
+
+# Markdown success writes only the sibling, then a CLI failure leaves source untouched.
 mkdir -p "$WORK/docs"
 printf '# Dense title\n\nDense body.\n' > "$WORK/docs/input.md"
 md_payload="$(jq -n --arg cwd "$WORK" --arg path "$WORK/docs/input.md" \
   '{session_id:"md1",cwd:$cwd,tool_input:{file_path:$path}}')"
-printf '%s' "$md_payload" | env TMPDIR="$WORK/md-tmp" CLAUDISH_MD_DIR="$WORK/docs" \
-  CLAUDISH_MIN_CHARS=1 FAKE_MODE=markdown "$ROOT/rewrite-md.sh" "$ROOT" "$MD_DATA" >/dev/null
+printf '%s' "$md_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/md-tmp" CLAUDISH_MD_DIR="$WORK/docs" \
+  CLAUDISH_MIN_CHARS=1 FAKE_MODE=markdown "$ROOT/rewrite-md.sh" "$ROOT" >/dev/null
 [ "$(cat "$WORK/docs/input.md")" = $'# Dense title\n\nDense body.' ] || fail 'Markdown source changed in sibling mode'
 assert_contains "$(cat "$WORK/docs/input.plain.md")" 'Plain body.'
 
 rm "$WORK/docs/input.plain.md"
-md_error="$(printf '%s' "$md_payload" | env TMPDIR="$WORK/md-error-tmp" \
-  CLAUDISH_MD_DIR="$WORK/docs" CLAUDISH_MIN_CHARS=1 FAKE_MODE=error \
-  "$ROOT/rewrite-md.sh" "$ROOT" "$MD_DATA")"
-[ ! -e "$WORK/docs/input.plain.md" ] || fail 'provider failure wrote a Markdown sibling'
+md_error="$(printf '%s' "$md_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/md-error-tmp" CLAUDISH_MD_DIR="$WORK/docs" CLAUDISH_MIN_CHARS=1 \
+  FAKE_MODE=error "$ROOT/rewrite-md.sh" "$ROOT")"
+[ ! -e "$WORK/docs/input.plain.md" ] || fail 'CLI failure wrote a Markdown sibling'
 assert_contains "$(printf '%s' "$md_error" | jq -r '.systemMessage')" 'File left unchanged'
-[ "$(cat "$WORK/docs/input.md")" = $'# Dense title\n\nDense body.' ] || fail 'provider failure changed Markdown source'
+[ "$(cat "$WORK/docs/input.md")" = $'# Dense title\n\nDense body.' ] || fail 'CLI failure changed Markdown source'
 
 printf 'hook integration tests passed\n'

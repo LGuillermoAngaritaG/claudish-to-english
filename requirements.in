@@ -1,2 +1,0 @@
-# LiteLLM 1.82.7 and 1.82.8 were compromised. Keep this exact, reviewed pin.
-litellm==1.93.2

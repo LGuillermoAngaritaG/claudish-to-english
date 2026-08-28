@@ -26,78 +26,46 @@ responses leave Claude's original text (and source files) unchanged.
 - Marks the nested CLI session with `CLAUDISH_INNER` so its own display hook
   fails open instead of recursing, and runs it in a scratch directory to keep
   one-shot sessions out of the caller's project history.
-- Adds `/claudish-to-english:configure` for choosing the rewrite model.
+- Drops Python entirely. There is no setup step, no `uv`, no virtual
+  environment, no pinned dependency set, and no configuration file: three bash
+  scripts and `jq`.
 - Keeps both display and Markdown hooks fail-open and includes deterministic
   tests that stub the CLI and never make a real model call.
 
-## Install and one-time setup
-
-Install from this repository's marketplace:
+## Install
 
 ```text
 /plugin marketplace add LGuillermoAngaritaG/claudish-to-english
 /plugin install claudish-to-english@gvzdv-plugins
 ```
 
-Then exit Claude Code and explicitly initialize installed plugins:
+That is the whole installation. The hooks need `jq` and the `claude` CLI on
+`PATH`; install `jq` separately if it is missing (for example, `brew install jq`
+on macOS). There is no setup hook, no runtime to provision, and nothing written
+outside the plugin directory.
 
-```bash
-claude --init-only
-```
-
-The only model-runtime prerequisite is
-[`uv`](https://docs.astral.sh/uv/getting-started/installation/). The hooks also
-use `jq`; install it separately if it is not already available (for example,
-`brew install jq` on macOS). You do not need to install or select Python, create
-a virtual environment, or run `pip` yourself. If Python 3.14 is unavailable,
-`uv` downloads and manages it automatically.
-
-The plugin's documented `Setup` hook creates a versioned virtual environment
-under `${CLAUDE_PLUGIN_DATA}`, uses `uv` to install the exact dependencies from
-`requirements.lock` with required hashes, verifies LiteLLM is exactly `1.93.2`,
-and atomically activates that runtime. The managed Python interpreter,
-environment, and package cache all stay under plugin data. Setup does not
-install a plugin command on your global `PATH`, invoke `pip`, or modify your
-project or shell profile. Uninstalling the plugin without `--keep-data` removes
-that private runtime state with the rest of its plugin data.
-
-Start Claude Code again and invoke the user-only configuration command:
-
-```text
-/claudish-to-english:configure
-```
-
-The interactive script asks only for a model alias, defaulting to `haiku`.
-There is no key to enter; the CLI reuses the login you already have. Normal
-model invocation cannot trigger this command automatically.
-
-If the runtime or configuration is unavailable, the first skipped rewrite in a
-session explains which of those two commands to run. The original text remains
-visible.
+If the CLI is missing, the first skipped rewrite in a session says so and the
+original text stays on screen.
 
 ## Choosing a model
 
-Any alias the Claude Code CLI accepts works, so `haiku`, `sonnet`, or a full
-model id such as `claude-haiku-4-5`:
+Set `CLAUDISH_MODEL` to any alias the Claude Code CLI accepts, such as `haiku`,
+`sonnet`, or a full model id:
 
-```text
-Model alias [haiku]: haiku
+```json
+{
+  "env": { "CLAUDISH_MODEL": "haiku" }
+}
 ```
 
-`haiku` is the default because the display hook fires on every assistant
-message. Re-run `/claudish-to-english:configure` to change it.
+It defaults to `haiku` because the display hook fires on every assistant
+message.
 
-Rewrites cost roughly five seconds each, nearly all of it CLI startup rather
-than the model. They also draw on the same usage allowance as your interactive
-sessions, so a chatty session spends real quota on rewrites.
+Rewrites cost roughly five to seven seconds each, nearly all of it CLI startup
+rather than the model. They also draw on the same usage allowance as your
+interactive sessions, so a chatty session spends real quota on rewrites.
 
-## Configuration and privacy
-
-Configuration is stored as local plaintext at
-`${CLAUDE_PLUGIN_DATA}/config.json`. It now holds only a model alias, no
-credential. On POSIX systems the plugin still enforces mode `0600` on the file
-and `0700` on its directory, writes through a temporary file, fsyncs it, and
-activates it with an atomic rename.
+## Privacy
 
 Rewrites are sent to Anthropic under your existing Claude credentials, the same
 path as your interactive sessions. Display rewrites include the assistant
@@ -105,6 +73,9 @@ message plus up to 800 characters of the original user question as context;
 Markdown rewrites send the Markdown body. Unlike earlier versions of this fork,
 there is no local-only option: routing through the CLI means rewrites always
 leave your machine.
+
+Nothing is stored on disk beyond the chunk buffers under
+`$TMPDIR/claudish-to-english`, which are removed as each message completes.
 
 ## Display hook
 
@@ -153,6 +124,7 @@ only control hook behavior:
 | `CLAUDISH_OFF_FILE` | `~/.claude/claudish-off` | Live pause flag checked on every invocation. |
 | `CLAUDISH_MODE` | `append` | Display mode: `append` or `replace`. |
 | `CLAUDISH_MIN_CHARS` | `200` | Skip shorter prose after stripping fenced code. |
+| `CLAUDISH_MODEL` | `haiku` | Model alias passed to the CLI. |
 | `CLAUDISH_TIMEOUT` | `45` | Display rewrite timeout in seconds; covers CLI startup too. |
 | `CLAUDISH_MD_TIMEOUT` | `150` | Markdown model-call timeout in seconds. |
 | `CLAUDISH_NOTICE` | `1` | Show one fail-open notice per session; `0` stays silent. |
@@ -171,34 +143,20 @@ rm ~/.claude/claudish-off
 
 ## Dependency security
 
-The rewrite path no longer imports LiteLLM; it shells out to the Claude Code
-CLI and needs only the standard library. The `Setup` hook still provisions the
-hash-locked runtime below, which is now vestigial and slated for removal.
+There are no third-party dependencies. Earlier versions of this fork installed
+a hash-locked LiteLLM runtime to reach model providers; routing through the
+Claude Code CLI removed the need for it, along with the supply-chain surface it
+carried.
 
-LiteLLM `1.82.7` and `1.82.8` were affected by a 2026 PyPI supply-chain
-compromise; see the [LiteLLM security advisory](https://github.com/BerriAI/litellm/issues/24518).
-This plugin deliberately uses the later signed
-[LiteLLM v1.93.2 release](https://github.com/BerriAI/litellm/releases/tag/v1.93.2)
-and pins the complete transitive dependency set with package hashes. Setup uses
-`uv`, binary distributions only, and validates the installed LiteLLM version
-before activating it. Ambient project and user `uv` configuration is ignored
-for this installation.
-
-The setup flow follows Claude Code's official documentation for
-[Setup hooks](https://code.claude.com/docs/en/hooks#setup) and
-[persistent plugin data](https://code.claude.com/docs/en/plugins-reference#persistent-data-directory).
-The configuration command is declared
-[user-only](https://code.claude.com/docs/en/slash-commands#control-who-invokes-a-skill),
-and plugin path variables follow the
+The hooks follow Claude Code's
+[hooks reference](https://code.claude.com/docs/en/hooks) and the
 [plugin reference](https://code.claude.com/docs/en/plugins-reference).
 
 ## Development and testing
 
-The deterministic suite stubs the `claude` binary and a fake private runtime;
-it never makes a real model call:
+The suite stubs the `claude` binary, so it never makes a real model call:
 
 ```bash
-uv run --no-project --no-config --python 3.14 python -B -m unittest discover -s tests -p 'test_*.py'
 bash tests/test_hooks.sh
 ```
 
@@ -207,12 +165,9 @@ bash tests/test_hooks.sh
 ```text
 claudish-to-english/
 ├── .claude-plugin/       plugin and marketplace manifests
-├── hooks/hooks.json      Setup, MessageDisplay, and PostToolUse hooks
-├── requirements.in       deliberately pinned top-level dependency
-├── requirements.lock     complete hash-locked runtime dependencies
-├── scripts/              uv launchers, setup, configuration, internal helper
-├── skills/configure/     user-only configuration command
-├── tests/                deterministic unit and hook integration tests
+├── hooks/hooks.json      MessageDisplay and PostToolUse hooks
+├── tests/                hook integration tests
+├── claudish-call.sh      one bounded CLI call, shared by both hooks
 ├── rewrite.sh            display hook
 └── rewrite-md.sh         opt-in Markdown hook
 ```

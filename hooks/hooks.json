@@ -1,29 +1,14 @@
 {
   "hooks": {
-    "Setup": [
-      {
-        "matcher": "init",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}",
-              "${CLAUDE_PLUGIN_DATA}"
-            ],
-            "timeout": 600,
-            "statusMessage": "Installing the hash-locked claudish-to-english runtime with uv"
-          }
-        ]
-      }
-    ],
     "MessageDisplay": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/rewrite.sh",
-            "args": ["${CLAUDE_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_DATA}"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}"
+            ],
             "timeout": 60
           }
         ]
@@ -36,7 +21,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/rewrite-md.sh",
-            "args": ["${CLAUDE_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_DATA}"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}"
+            ],
             "timeout": 180
           }
         ]

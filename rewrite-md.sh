@@ -35,7 +35,8 @@
 #   CLAUDISH_MD_SUFFIX <word>         sibling infix: NAME.<word>.md (default "plain")
 #   CLAUDISH_MIN_CHARS <n>            skip files whose prose (code stripped) is shorter (default 200)
 #   CLAUDISH_STUB      1|0            deterministic stub instead of ollama (mechanics testing)
-#   CLAUDISH_MD_TIMEOUT <seconds>     LLM client timeout for file rewrites (default 150).
+#   CLAUDISH_MODEL      <alias>        model for rewrites (default haiku)
+#   CLAUDISH_MD_TIMEOUT <seconds>     timeout for file rewrites (default 150).
 #                                     Large models rewriting long docs are slow; this is
 #                                     higher than the display hook's timeout on purpose and
 #                                     must stay below the PostToolUse hook timeout in hooks.json.
@@ -47,7 +48,6 @@
 set -uo pipefail
 
 PLUGIN_ROOT="${1:-$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)}"
-PLUGIN_DATA="${2:-}"
 
 ENABLED="${CLAUDISH_ENABLED:-1}"
 # Runtime kill switch: env is frozen at session launch, so a hotkey or script
@@ -162,38 +162,12 @@ if [ "$STUB" = "1" ]; then
   dbg "stub rewrite"
 else
   sys="You rewrite Markdown prose into much simpler, plain English. Keep every fact, name, number, link, and file path. Keep all Markdown structure — headings, lists, tables, and links. Do NOT change fenced code blocks or any YAML frontmatter; reproduce them exactly. Use short sentences and everyday words. Output ONLY the rewritten Markdown, with no preamble, labels, or commentary."
-  if [ -z "$PLUGIN_DATA" ] || [ ! -f "$PLUGIN_DATA/runtime.json" ]; then
-    llm_rc=90
-    failure="setup"
-  elif [ ! -f "$PLUGIN_DATA/config.json" ]; then
-    llm_rc=91
-    failure="configure"
-  else
-    runtime_name="$(jq -r '.venv // empty' "$PLUGIN_DATA/runtime.json" 2>/dev/null)"
-    case "$runtime_name" in
-      ''|*/*|*..*) llm_rc=90; failure="setup" ;;
-      *)
-        runtime_python="$PLUGIN_DATA/$runtime_name/bin/python"
-        if [ ! -x "$runtime_python" ]; then
-          llm_rc=90
-          failure="setup"
-        else
-          req="$(jq -n --arg s "$sys" --arg u "$body" '{system:$s,content:$u}' 2>/dev/null)"
-          if [ -z "$req" ]; then
-            llm_rc=1
-            failure="request"
-          else
-            rewrite="$(printf '%s' "$req" | "$runtime_python" "$PLUGIN_ROOT/scripts/claudish_llm.py" \
-              --config "$PLUGIN_DATA/config.json" --timeout "$LLM_TIMEOUT" 2>/dev/null)"
-            llm_rc=$?
-            [ "$llm_rc" = "124" ] && failure="timeout"
-            [ "$llm_rc" != "0" ] && [ -z "$failure" ] && failure="provider"
-            [ "$llm_rc" = "0" ] && [ -z "$rewrite" ] && failure="empty"
-          fi
-        fi
-        ;;
-    esac
-  fi
+  rewrite="$(printf '%s' "$body" | "$PLUGIN_ROOT/claudish-call.sh" "$sys" "$LLM_TIMEOUT")"
+  llm_rc=$?
+  [ "$llm_rc" = "124" ] && failure="timeout"
+  [ "$llm_rc" = "3" ] && failure="cli"
+  [ "$llm_rc" != "0" ] && [ -z "$failure" ] && failure="provider"
+  [ "$llm_rc" = "0" ] && [ -z "$rewrite" ] && failure="empty"
   dbg "llm rc=$llm_rc failure=${failure:-none} rewrite_bytes=${#rewrite}"
 fi
 
@@ -207,16 +181,9 @@ if [ -z "$rewrite" ]; then
   if [ "$NOTICE" = "1" ] && [ ! -e "$notified" ]; then
     why=""
     case "$failure" in
-      setup)
-        if command -v uv >/dev/null 2>&1; then
-          why="the private LiteLLM runtime is not ready — run \`claude --init-only\` once. Markdown rewrite skipped; file left unchanged."
-        else
-          why="uv is not installed — install uv, then run \`claude --init-only\` once. Markdown rewrite skipped; file left unchanged."
-        fi
-        ;;
-      configure) why="no model is configured — run \`/claudish-to-english:configure\`. Markdown rewrite skipped; file left unchanged." ;;
-      timeout) why="rewrite of $(basename "$file") timed out after ${LLM_TIMEOUT}s. Raise CLAUDISH_MD_TIMEOUT or configure a faster model. File left unchanged." ;;
-      provider|request) why="the configured model/provider call failed. Check the local plugin configuration and provider availability. File left unchanged." ;;
+      cli) why="the \`claude\` CLI is not on PATH. Markdown rewrite skipped; file left unchanged." ;;
+      timeout) why="rewrite of $(basename "$file") timed out after ${LLM_TIMEOUT}s. Raise CLAUDISH_MD_TIMEOUT or set CLAUDISH_MODEL to a faster model. File left unchanged." ;;
+      provider|request) why="the rewrite call failed. Check that \`claude\` runs and you are logged in. File left unchanged." ;;
     esac
     if [ -n "$why" ]; then
       : > "$notified" 2>/dev/null || true

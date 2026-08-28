@@ -1,6 +1,6 @@
 {
   "name": "claudish-to-english",
-  "description": "Shows a plain-English rewrite of Claude Code messages using a privately configured LiteLLM provider, including local Ollama. The original transcript is preserved.",
+  "description": "Shows a plain-English rewrite of Claude Code messages, produced by the Claude Code CLI on your existing login. The original transcript is preserved.",
   "version": "0.2.0",
   "author": {
     "name": "Mike Gvozdev",
@@ -10,5 +10,10 @@
   "homepage": "https://github.com/gvzdv/claudish-to-english#readme",
   "repository": "https://github.com/gvzdv/claudish-to-english",
   "license": "MIT",
-  "keywords": ["litellm", "ollama", "llm", "hooks", "readability", "plain-language", "claude-code"]
+  "keywords": [
+    "hooks",
+    "readability",
+    "plain-language",
+    "claude-code"
+  ]
 }

@@ -10,7 +10,7 @@
     {
       "name": "claudish-to-english",
       "source": "./",
-      "description": "Shows a plain-English rewrite of Claude Code messages using a privately configured LiteLLM provider, including local Ollama.",
+      "description": "Shows a plain-English rewrite of Claude Code messages, produced by the Claude Code CLI on your existing login.",
       "category": "productivity"
     }
   ]
