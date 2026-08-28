@@ -81,8 +81,11 @@ It defaults to `haiku` because the display hook fires on every assistant
 message.
 
 Rewrite latency scales with the message, and the model dominates it. A bare CLI
-call costs about three seconds; a short message rewrites in a few seconds, while
-a dense technical one measured 46 to 52 seconds on `haiku`. `CLAUDISH_TIMEOUT`
+call costs about three seconds, and a dense technical message rewrites in about
+four on `haiku`. Rewriting needs no reasoning, so the call sets
+`MAX_THINKING_TOKENS=0`: left on, `haiku` spent 1597 of 1721 output tokens
+thinking about a message that rewrote to 110, which took the same rewrite from
+under four seconds to roughly 24. `CLAUDISH_TIMEOUT`
 defaults to 300 seconds so a long message is never cut off, and the
 `MessageDisplay` hook is given 310 in `hooks.json` so the script's own watchdog
 always fails open before Claude Code kills the process. Lower it if you would

@@ -14,6 +14,7 @@ cat > "$WORK/bin/claude" <<'FAKE'
 #!/usr/bin/env bash
 if [ -n "${FAKE_CAPTURE:-}" ]; then
   cat > "$FAKE_CAPTURE.stdin"
+  printf '%s' "${MAX_THINKING_TOKENS:-unset}" > "$FAKE_CAPTURE.thinking"
   while [ "$#" -gt 0 ]; do
     [ "$1" = "--system-prompt" ] && printf '%s' "$2" > "$FAKE_CAPTURE.system"
     [ "$1" = "--model" ] && printf '%s' "$2" > "$FAKE_CAPTURE.model"
@@ -80,6 +81,10 @@ case "$(cat "$CAPTURE.system")" in
   *'instead, whatever language'*) fail 'language override added with no language configured' ;;
 esac
 [ "$(cat "$CAPTURE.model")" = 'haiku' ] || fail 'display request did not default to haiku'
+
+# Rewriting needs no reasoning, and haiku spends most of its output budget there
+# when left to its own devices, which is what made a rewrite take 24s instead of 4.
+[ "$(cat "$CAPTURE.thinking")" = '0' ] || fail 'thinking was not disabled for the rewrite call'
 
 # CLAUDISH_MODEL selects the model.
 MODEL_CAPTURE="$WORK/model"
