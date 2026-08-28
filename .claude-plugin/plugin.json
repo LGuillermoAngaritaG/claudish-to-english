@@ -1,7 +1,7 @@
 {
   "name": "claudish-to-english",
   "description": "Shows a plain-English rewrite of Claude Code messages, produced by the Claude Code CLI on your existing login. The original transcript is preserved.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": {
     "name": "Mike Gvozdev",
     "email": "mv.gvozdev@gmail.com",

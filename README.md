@@ -23,9 +23,15 @@ responses leave Claude's original text (and source files) unchanged.
 
 - Replaces direct Ollama HTTP calls with a `claude -p` subprocess, so rewrites
   bill against an existing Claude subscription instead of a metered API key.
-- Marks the nested CLI session with `CLAUDISH_INNER` so its own display hook
-  fails open instead of recursing, and runs it in a scratch directory to keep
-  one-shot sessions out of the caller's project history.
+- Marks the nested CLI session with `CLAUDISH_INNER` and returns from the
+  display hook immediately when it is set, so the nested session cannot append
+  its own fail-open notice into the rewrite text the outer session displays.
+  The nested session runs in a scratch directory to keep one-shot sessions out
+  of the caller's project history.
+- Moves the system prompts out of the shell scripts into editable
+  [`prompts/`](prompts/) files, written against the published text-simplification
+  literature: verbatim retention of numbers, dates and identifiers, an explicit
+  licence to leave already-clear sentences alone, and a 25-word sentence cap.
 - Drops Python entirely. There is no setup step, no `uv`, no virtual
   environment, no pinned dependency set, and no configuration file: three bash
   scripts and `jq`.
@@ -39,10 +45,23 @@ responses leave Claude's original text (and source files) unchanged.
 /plugin install claudish-to-english@gvzdv-plugins
 ```
 
-That is the whole installation. The hooks need `jq` and the `claude` CLI on
-`PATH`; install `jq` separately if it is missing (for example, `brew install jq`
-on macOS). There is no setup hook, no runtime to provision, and nothing written
-outside the plugin directory.
+That is the whole installation. There is no setup hook and no runtime to
+provision.
+
+### Requirements
+
+| | Why |
+|---|---|
+| `bash` | The hooks are bash. No bash-4 features are used, so macOS's stock 3.2 is fine. |
+| `jq` | Parses the hook payload. Install separately if missing, for example `brew install jq`. |
+| `claude` on `PATH` | Rewrites run as a nested `claude -p` subprocess. |
+| A Claude login | The nested call bills against your existing subscription. No API key is read or stored. |
+
+Both `jq` and `claude` are checked before use and fail open, so a missing one
+costs you the rewrite and never the message. `awk`, `tr`, `wc`, `find`, `sed`,
+`mktemp` and `date` are also called, all POSIX-standard. There is no `timeout`
+binary requirement: the CLI call is bounded by a hand-rolled watchdog, because
+macOS does not ship one.
 
 If the CLI is missing, the first skipped rewrite in a session says so and the
 original text stays on screen.
@@ -61,9 +80,15 @@ Set `CLAUDISH_MODEL` to any alias the Claude Code CLI accepts, such as `haiku`,
 It defaults to `haiku` because the display hook fires on every assistant
 message.
 
-Rewrites cost roughly five to seven seconds each, nearly all of it CLI startup
-rather than the model. They also draw on the same usage allowance as your
-interactive sessions, so a chatty session spends real quota on rewrites.
+Rewrite latency scales with the message, and the model dominates it. A bare CLI
+call costs about three seconds; a short message rewrites in a few seconds, while
+a dense technical one measured 46 to 52 seconds on `haiku`. `CLAUDISH_TIMEOUT`
+defaults to 90 seconds for that reason, and the `MessageDisplay` hook is given
+100 in `hooks.json` so the script's own watchdog fails open before Claude Code
+kills the process.
+
+Rewrites also draw on the same usage allowance as your interactive sessions, so
+a chatty session spends real quota on them.
 
 ## Privacy
 
@@ -74,8 +99,18 @@ Markdown rewrites send the Markdown body. Unlike earlier versions of this fork,
 there is no local-only option: routing through the CLI means rewrites always
 leave your machine.
 
-Nothing is stored on disk beyond the chunk buffers under
-`$TMPDIR/claudish-to-english`, which are removed as each message completes.
+Three things land on disk:
+
+- Chunk buffers under `$TMPDIR/claudish-to-english`, removed as each message
+  completes.
+- A `<session-id>.notified` flag per session in the same directory, so the
+  fail-open notice appears only once. These are small and are swept with the
+  buffer directories after 30 minutes.
+- **A full transcript of every nested rewrite session**, written by the Claude
+  Code CLI into `~/.claude/projects/<slugified-scratch-path>/`. Each one
+  contains the assistant message that was rewritten. They are not cleaned up:
+  36 of them totalling 2.0 MB accumulated during development of this fork.
+  Delete that directory if you do not want the history.
 
 ## Display hook
 
@@ -184,6 +219,7 @@ bash tests/test_hooks.sh
 claudish-to-english/
 ├── .claude-plugin/       plugin and marketplace manifests
 ├── hooks/hooks.json      MessageDisplay and PostToolUse hooks
+├── prompts/              the system prompts, one file per hook
 ├── tests/                hook integration tests
 ├── claudish-call.sh      one bounded CLI call, shared by both hooks
 ├── rewrite.sh            display hook
