@@ -45,7 +45,40 @@ display_content="$(printf '%s' "$display_out" | jq -r '.hookSpecificOutput.displ
 assert_contains "$display_content" 'Dense source text.'
 assert_contains "$display_content" 'Plain response.'
 [ "$(cat "$CAPTURE.stdin")" = 'Dense source text.' ] || fail 'display request lost source text'
-assert_contains "$(cat "$CAPTURE.system")" 'plain English'
+assert_contains "$(cat "$CAPTURE.system")" 'plain language'
+
+# The base prompt must not name a language: the rewrite follows the message's own
+# language unless one is configured.
+case "$(cat "$CAPTURE.system")" in
+  *'plain English'*) fail 'base prompt hard-codes English' ;;
+esac
+
+# CLAUDISH_STYLE swaps the base prompt for the matching prompts/style-*.md.
+STYLE_CAPTURE="$WORK/style"
+printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/style-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_STYLE=caveman \
+  CLAUDISH_STYLE_FILE="$WORK/no-style-file" HOME="$WORK" \
+  FAKE_CAPTURE="$STYLE_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
+assert_contains "$(cat "$STYLE_CAPTURE.system")" 'caveman'
+
+# An unknown style falls back to the default prompt rather than an empty one.
+BADSTYLE_CAPTURE="$WORK/badstyle"
+printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/badstyle-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_STYLE=nonsense \
+  CLAUDISH_STYLE_FILE="$WORK/no-style-file" HOME="$WORK" \
+  FAKE_CAPTURE="$BADSTYLE_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
+assert_contains "$(cat "$BADSTYLE_CAPTURE.system")" 'plain language'
+
+# CLAUDISH_LANG adds a language instruction; unset leaves the message's own.
+LANG_CAPTURE="$WORK/lang"
+printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/lang-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_LANG='Spanish' \
+  CLAUDISH_LANG_FILE="$WORK/no-lang-file" HOME="$WORK" \
+  FAKE_CAPTURE="$LANG_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
+assert_contains "$(cat "$LANG_CAPTURE.system")" 'Write the rewrite in Spanish'
+case "$(cat "$CAPTURE.system")" in
+  *'instead, whatever language'*) fail 'language override added with no language configured' ;;
+esac
 [ "$(cat "$CAPTURE.model")" = 'haiku' ] || fail 'display request did not default to haiku'
 
 # CLAUDISH_MODEL selects the model.
@@ -54,6 +87,15 @@ printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
   TMPDIR="$WORK/model-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_MODEL=sonnet \
   FAKE_CAPTURE="$MODEL_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
 [ "$(cat "$MODEL_CAPTURE.model")" = 'sonnet' ] || fail 'CLAUDISH_MODEL ignored'
+
+# /claudish writes a model flag file; it must outrank the frozen env var.
+printf 'opus\n' > "$WORK/model-file"
+MFILE_CAPTURE="$WORK/modelfile"
+printf '%s' "$display_payload" | env -u CLAUDISH_INNER PATH="$WITH_CLI" \
+  TMPDIR="$WORK/modelfile-tmp" CLAUDISH_MIN_CHARS=1 CLAUDISH_NOTICE=0 CLAUDISH_MODEL=sonnet \
+  CLAUDISH_MODEL_FILE="$WORK/model-file" \
+  FAKE_CAPTURE="$MFILE_CAPTURE" "$ROOT/rewrite.sh" "$ROOT" >/dev/null
+[ "$(cat "$MFILE_CAPTURE.model")" = 'opus' ] || fail 'model flag file did not outrank CLAUDISH_MODEL'
 
 # A nested session must fail open rather than call itself.
 inner_out="$(printf '%s' "$display_payload" | env PATH="$WITH_CLI" \

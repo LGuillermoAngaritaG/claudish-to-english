@@ -83,9 +83,10 @@ message.
 Rewrite latency scales with the message, and the model dominates it. A bare CLI
 call costs about three seconds; a short message rewrites in a few seconds, while
 a dense technical one measured 46 to 52 seconds on `haiku`. `CLAUDISH_TIMEOUT`
-defaults to 90 seconds for that reason, and the `MessageDisplay` hook is given
-100 in `hooks.json` so the script's own watchdog fails open before Claude Code
-kills the process.
+defaults to 300 seconds so a long message is never cut off, and the
+`MessageDisplay` hook is given 310 in `hooks.json` so the script's own watchdog
+always fails open before Claude Code kills the process. Lower it if you would
+rather a slow rewrite give up quickly than keep the block pending.
 
 Rewrites also draw on the same usage allowance as your interactive sessions, so
 a chatty session spends real quota on them.
@@ -168,6 +169,26 @@ Placeholders are substituted literally, so a question containing `&`, `\`, `*`,
 back to the prompt built into the script, so a bad edit degrades to the default
 rather than breaking the hook.
 
+## Styles, language, and `/claudish`
+
+`/claudish` switches the rewrite mid-session without a restart. `/claudish` on
+its own prints a dashboard; `on`, `off`, `append`, `replace`,
+`style <tldr|5y|caveman>`, `language <name>`, `model <name>`, `last`, `cycle`
+and `reset` each change one thing. Every override is a flag file re-read on the
+next message, which is why it can take effect mid-session where a frozen
+environment variable cannot.
+
+| style | prompt file | result |
+|---|---|---|
+| default | `prompts/display.md` | plain-language rewrite |
+| `tldr` | `prompts/style-tldr.md` | a summary, half the length or less |
+| `5y` | `prompts/style-5y.md` | explained as if to a five-year-old |
+| `caveman` | `prompts/style-caveman.md` | blunt caveman speak |
+
+The rewrite follows the language of the message it rewrites. Set `language` in
+your Claude Code `settings.json`, or `/claudish language <name>`, to force one;
+`CLAUDISH_LANG=""` keeps the message's own language.
+
 ## Behavior configuration
 
 Rewrites need no launch-time environment variables. The `CLAUDISH_*` variables
@@ -179,8 +200,10 @@ only control hook behavior:
 | `CLAUDISH_OFF_FILE` | `~/.claude/claudish-off` | Live pause flag checked on every invocation. |
 | `CLAUDISH_MODE` | `append` | Display mode: `append` or `replace`. |
 | `CLAUDISH_MIN_CHARS` | `200` | Skip shorter prose after stripping fenced code. |
-| `CLAUDISH_MODEL` | `haiku` | Model alias passed to the CLI. |
-| `CLAUDISH_TIMEOUT` | `90` | Display rewrite timeout in seconds; covers CLI startup too. |
+| `CLAUDISH_MODEL` | `haiku` | Model alias passed to the CLI. `/claudish model` writes a flag file that outranks it. |
+| `CLAUDISH_STYLE` | unset | `tldr`, `5y` or `caveman`. `/claudish style` overrides via flag file. |
+| `CLAUDISH_LANG` | unset | Force an output language. Set but empty keeps the message's own. |
+| `CLAUDISH_TIMEOUT` | `300` | Display rewrite timeout in seconds; covers CLI startup too. |
 | `CLAUDISH_MD_TIMEOUT` | `150` | Markdown model-call timeout in seconds. |
 | `CLAUDISH_NOTICE` | `1` | Show one fail-open notice per session; `0` stays silent. |
 | `CLAUDISH_DEBUG` | `0` | Log non-secret state and result sizes under `$TMPDIR/claudish-to-english`. |
@@ -221,8 +244,11 @@ bash tests/test_hooks.sh
 claudish-to-english/
 ├── .claude-plugin/       plugin and marketplace manifests
 ├── hooks/hooks.json      MessageDisplay and PostToolUse hooks
-├── prompts/              the system prompts, one file per hook
+├── commands/claudish.md  the /claudish slash command
+├── prompts/              the system prompts, one file per hook and style
 ├── tests/                hook integration tests
+├── claudish-ctl.sh       /claudish runtime control
+├── lang.sh               output-language resolver (sourced)
 ├── claudish-call.sh      one bounded CLI call, shared by both hooks
 ├── rewrite.sh            display hook
 └── rewrite-md.sh         opt-in Markdown hook

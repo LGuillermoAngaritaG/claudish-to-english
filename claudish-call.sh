@@ -13,6 +13,14 @@ set -uo pipefail
 exec 2>/dev/null
 
 sys="${1:?system prompt required}"
+
+# /claudish model writes a flag file; env is frozen at session launch, so the
+# file is what can change mid-session. File > env > haiku, same precedence the
+# off-file and style-file use. Sanitised: this lands on a command line.
+model_file="${CLAUDISH_MODEL_FILE:-$HOME/.claude/claudish-model}"
+model=""
+[ -f "$model_file" ] && model="$(head -c 128 "$model_file" 2>/dev/null | tr -cd 'A-Za-z0-9:._/-' | head -c 64)"
+[ -n "$model" ] || model="${CLAUDISH_MODEL:-haiku}"
 timeout_s="${2:?timeout required}"
 
 # The nested session loads this plugin too. Without the guard its own
@@ -47,7 +55,7 @@ cat > "$in_file"
 
 # No portable `timeout` on macOS, so watchdog the child by hand. The flag file
 # is what separates "we killed it" from "it failed on its own".
-(cd "$scratch" && claude -p --model "${CLAUDISH_MODEL:-haiku}" \
+(cd "$scratch" && claude -p --model "$model" \
   --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
   --system-prompt "$sys") < "$in_file" > "$out" 2>/dev/null &
 pid=$!

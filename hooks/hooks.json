@@ -5,11 +5,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/rewrite.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/rewrite.sh",
             "args": [
               "${CLAUDE_PLUGIN_ROOT}"
             ],
-            "timeout": 100
+            "timeout": 310
           }
         ]
       }
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/rewrite-md.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/rewrite-md.sh",
             "args": [
               "${CLAUDE_PLUGIN_ROOT}"
             ],

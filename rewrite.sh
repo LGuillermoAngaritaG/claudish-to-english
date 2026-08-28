@@ -40,8 +40,9 @@
 #   CLAUDISH_STUB      1|0            deterministic stub instead of ollama
 #                                           (for display-mechanics testing)
 #   CLAUDISH_TIMEOUT   <seconds>      rewrite timeout, CLI startup included
-#                                          (default 90; a dense technical
-#                                          message measured 46-52s on haiku)
+#                                          (default 300; a dense technical
+#                                          message measured 46-52s on haiku,
+#                                          so this is deliberate headroom)
 #   CLAUDISH_MODEL     <alias>          model for rewrites (default haiku)
 #   CLAUDISH_DEBUG     1|0            write a debug log (default 0)
 #   CLAUDISH_NOTICE    1|0            once-per-session on-screen notice when the
@@ -61,12 +62,35 @@ ENABLED="${CLAUDISH_ENABLED:-1}"
 MODE="${CLAUDISH_MODE:-append}"
 MIN_CHARS="${CLAUDISH_MIN_CHARS:-200}"
 STUB="${CLAUDISH_STUB:-0}"
-LLM_TIMEOUT="${CLAUDISH_TIMEOUT:-90}"
+LLM_TIMEOUT="${CLAUDISH_TIMEOUT:-300}"
 DEBUG="${CLAUDISH_DEBUG:-0}"
 NOTICE="${CLAUDISH_NOTICE:-1}"
 
+
+# Rewrite-style preset (display hook only). Each maps to prompts/style-<name>.md.
+# The flag file is checked per message so /claudish can switch style mid-session,
+# for the same reason the off-file sits above CLAUDISH_ENABLED.
+STYLE=""
+case "${CLAUDISH_STYLE:-}" in tldr|5y|caveman) STYLE="$CLAUDISH_STYLE" ;; esac
+_style_file="${CLAUDISH_STYLE_FILE:-$HOME/.claude/claudish-style}"
+if [ -f "$_style_file" ]; then
+  case "$(tr -d '[:space:]' < "$_style_file" 2>/dev/null)" in
+    tldr) STYLE=tldr ;; 5y) STYLE=5y ;; caveman) STYLE=caveman ;; default) STYLE="" ;;
+  esac
+fi
+
+# Output language. Empty means "keep whatever language the message is in".
+claudish_language() { :; }
+. "$PLUGIN_ROOT/lang.sh" 2>/dev/null || :
+OUT_LANG="$(claudish_language "$PWD" 2>/dev/null)"
+
 BUF_ROOT="${TMPDIR:-/tmp}/claudish-to-english"
-SEP=$'\n\n────────────────────────\n💬 In plain English:\n\n'
+case "$STYLE" in
+  tldr)    SEP=$'\n\n────────────────────────\n📌 TL;DR'"${OUT_LANG:+ in $OUT_LANG}"$':\n\n' ;;
+  5y)      SEP=$'\n\n────────────────────────\n👶 Like you\'re five'"${OUT_LANG:+, in $OUT_LANG}"$':\n\n' ;;
+  caveman) SEP=$'\n\n────────────────────────\n🦴 Ugh. Me say'"${OUT_LANG:+ in $OUT_LANG}"$':\n\n' ;;
+  *)       SEP=$'\n\n────────────────────────\n💬 In plain '"${OUT_LANG:-English}"$':\n\n' ;;
+esac
 
 mkdir -p "$BUF_ROOT" 2>/dev/null || true
 
@@ -172,13 +196,22 @@ if [ "$STUB" = "1" ]; then
   rewrite="STUB-SIMPLIFIED ✦ mode=$MODE chunks=$nparts prose_len=$prose_len ✦ (this text came from the hook, not the model)"
   dbg "stub rewrite"
 else
-  sys="$(prompt_file display.md "You rewrite the assistant's message into much simpler, plain English. Keep every fact, name, number, and file path. Use short sentences and everyday words. Leave fenced code blocks unchanged. Output ONLY the rewritten message with no preamble, labels, or commentary.")"
+  case "$STYLE" in
+    tldr)    sys="$(prompt_file style-tldr.md    "Rewrite the message as a short summary in plain language, half its length or less. Keep key facts, numbers and file paths; keep identifiers as written. Output only the rewrite.")" ;;
+    5y)      sys="$(prompt_file style-5y.md      "Rewrite the message as if explaining to a five-year-old: very simple words, short sentences. Keep every fact, number and file path accurate and keep identifiers as written. Output only the rewrite.")" ;;
+    caveman) sys="$(prompt_file style-caveman.md "Rewrite the message as blunt caveman speak: very short sentences, no articles, present tense. Keep every fact, number, file path and identifier exactly as written. Output only the rewrite.")" ;;
+    *)       sys="$(prompt_file display.md "You rewrite the assistant's message into much simpler, plain language. Write the rewrite in the same language as the message you are rewriting. Keep every fact, name, number, and file path. Use short sentences and everyday words. Leave fenced code blocks unchanged. Output ONLY the rewritten message with no preamble, labels, or commentary.")" ;;
+  esac
 
   # append mode leaves the original on screen directly above the rewrite, so the
   # rewrite should not track it sentence by sentence. In replace mode the
   # original is suppressed and that instruction would be false, so it is skipped.
   if [ "$MODE" = "append" ]; then
     sys="$sys"$'\n\n'"$(prompt_file append.md "The reader can already see the original message directly above your rewrite, so do not track it sentence by sentence. Give the shortest version a non-expert would fully understand.")"
+  fi
+
+  if [ -n "$OUT_LANG" ]; then
+    sys="$sys"$'\n\n'"Write the rewrite in $OUT_LANG instead, whatever language the assistant's message is in. Use $OUT_LANG for all prose, including headings and lists. Keep code, identifiers, file paths, commands, and quoted output exactly as they are."
   fi
 
   # Context only: the original user question the assistant is answering.
