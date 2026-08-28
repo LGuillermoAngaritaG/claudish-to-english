@@ -46,7 +46,7 @@ are not running two copies at once:
 
 ```jsonc
 {
-  "enabledPlugins": { "claudish-to-english@gvzdv-plugins": false },
+  "enabledPlugins": { "claudish-to-english@guillermoangarita-plugins": false },
   "env": { "CLAUDISH_STUB": "1", "CLAUDISH_MIN_CHARS": "50", "CLAUDISH_DEBUG": "1" },
   "hooks": {
     "MessageDisplay": [

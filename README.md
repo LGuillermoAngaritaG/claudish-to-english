@@ -42,7 +42,7 @@ responses leave Claude's original text (and source files) unchanged.
 
 ```text
 /plugin marketplace add LGuillermoAngaritaG/claudish-to-english
-/plugin install claudish-to-english@gvzdv-plugins
+/plugin install claudish-to-english@guillermoangarita-plugins
 ```
 
 That is the whole installation. There is no setup hook and no runtime to

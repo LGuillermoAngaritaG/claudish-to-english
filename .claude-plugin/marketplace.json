@@ -1,11 +1,10 @@
 {
-  "name": "gvzdv-plugins",
+  "name": "guillermoangarita-plugins",
   "owner": {
-    "name": "Mike Gvozdev",
-    "email": "mv.gvozdev@gmail.com",
-    "url": "https://github.com/gvzdv"
+    "name": "Luis Angarita",
+    "url": "https://github.com/LGuillermoAngaritaG"
   },
-  "description": "Mike Gvozdev's Claude Code plugins.",
+  "description": "Luis Angarita's Claude Code plugins.",
   "plugins": [
     {
       "name": "claudish-to-english",
